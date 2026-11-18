@@ -86,9 +86,9 @@ Teams pick one and compromise: gorm users accept the performance tax; bun users 
 
 ## 9. Current Status
 
-- **Built:** design set (DESIGN.md, GAP_ANALYSIS.md, this doc suite) + **M1 core plumbing**: sentinel errors with `AddError` wrap-chain, `logger/` (levels, `SlowThreshold`, `ParameterizedQueries`, slog adapter, gorm-parity trace format), `dialect/` (Dialector interface, 35 feature flags, BaseDialect appenders with NUL rejection + line-comment guard, golden identifier quoting, `dialect/sqlite`, `dialect/postgres`), session layer (`Config`/`Open`/`DB`/copy-on-write `getInstance`, `Session`/`WithContext`/`Debug`/`ToSQL`/`Use`), and panic-safe transactions with savepoint nesting.
-- **In progress:** Milestone M2 — schema reflection (cached parsing, `fusion:"..."` tags, naming, field closures, relations, hooks).
-- **Known limitations:** no query engine yet (M3): `Exec` is the only raw statement; `ToSQL` renders raw SQL only. `NamingStrategy`/`PrepareStmt`/`CreateBatchSize` config fields arrive with their milestones (M2/M5/M3).
+- **Built:** design set (DESIGN.md, GAP_ANALYSIS.md, this doc suite); **M1 core plumbing** (sentinel errors + AddError wrap-chain, `logger/` with slog adapter, `dialect/` with 35 feature flags + golden quoting + SQLite/PG dialects, session/clone layer, panic-safe transactions with savepoints); **M2 schema layer** (cached per-type `*Table` with concurrent dedupe + two-phase relation init, `fusion:"..."` tag parser with lenient/strict modes + gorm migration aliases, `Namer`/`Tabler` with pluralized snake_case via `jinzhu/inflection`, field metadata with precompiled zero-alloc Appender/Scanner/IsZero closures, embedded structs with prefix + ambiguity detection, four relation kinds with FK/ polymorphic/m2m metadata + constraint tags, hook-presence booleans + explicit root hook interfaces).
+- **In progress:** Milestone M3 — query engine (`clause/` builders, callback pipeline, finishers, row scanning).
+- **Known limitations:** no query engine yet (M3): `Exec` is the only raw statement; `ToSQL` renders raw SQL only. `PrepareStmt` and `CreateBatchSize` config fields arrive in M5/M3.
 
 ## 10. Open Questions
 

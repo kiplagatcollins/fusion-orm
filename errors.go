@@ -8,6 +8,7 @@ import (
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
 	"github.com/kiplagatcollins/fusion-orm/logger"
+	"github.com/kiplagatcollins/fusion-orm/schema"
 )
 
 // ErrorTranslator maps driver constraint errors onto fusion sentinels. It
@@ -59,6 +60,12 @@ var (
 	// ErrInvalidDB is returned when the underlying connection pool cannot be
 	// resolved to a *sql.DB.
 	ErrInvalidDB = errors.New("invalid db")
+
+	// Schema parse errors are re-exported so callers only import fusion.
+	ErrInvalidModel    = schema.ErrInvalidModel
+	ErrInvalidTag      = schema.ErrInvalidTag
+	ErrAmbiguousField  = schema.ErrAmbiguousField
+	ErrInvalidRelation = schema.ErrInvalidRelation
 )
 
 // UnsupportedFeatureError names the specific feature flag that a dialect

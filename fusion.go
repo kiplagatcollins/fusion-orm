@@ -10,6 +10,7 @@ import (
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
 	"github.com/kiplagatcollins/fusion-orm/logger"
+	"github.com/kiplagatcollins/fusion-orm/schema"
 )
 
 // ConnPool is the execution interface every statement runs through: the
@@ -68,6 +69,10 @@ type Config struct {
 	// DisableNestedTransaction runs nested Transaction calls inline instead
 	// of via savepoints.
 	DisableNestedTransaction bool
+	// NamingStrategy maps Go model/field names to table/column names.
+	NamingStrategy schema.Namer
+	// StrictTags rejects unknown fusion tag keys instead of warning.
+	StrictTags bool
 
 	// ConnPool, when set before Open, is used instead of opening a pool
 	// through the dialector.
@@ -76,6 +81,8 @@ type Config struct {
 	Dialector dialect.Dialector
 	// Plugins registered before Open; each is initialized during Open.
 	Plugins map[string]Plugin
+	// tables is the per-session schema parse cache (shared by derivatives).
+	tables *schema.Tables
 }
 
 // Option configures Open. *Config implements Option, so a full config can be
@@ -152,6 +159,9 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 	if config.Logger == nil {
 		config.Logger = logger.Default
 	}
+	config.tables = schema.NewTables(config.NamingStrategy, config.StrictTags, func(key string) {
+		config.Logger.Warn(context.Background(), "unknown fusion tag key %q", key)
+	})
 	if config.NowFunc == nil {
 		config.NowFunc = func() time.Time { return time.Now().Local() }
 	}
@@ -295,6 +305,15 @@ func (db *DB) ToSQL(queryFn func(tx *DB) *DB) string {
 		return ""
 	}
 	return dialect.Explain(db.Dialector, string(stmt.SQL), stmt.Vars...)
+}
+
+// Parse returns the cached schema metadata for model, using this session's
+// naming strategy and tag strictness.
+func (db *DB) Parse(model any) (*schema.Table, error) {
+	if db.tables == nil {
+		return nil, schema.ErrInvalidModel
+	}
+	return db.tables.Parse(model)
 }
 
 // DB returns the underlying *sql.DB. On a transaction instance it returns

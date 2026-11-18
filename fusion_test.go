@@ -14,6 +14,7 @@ import (
 	"github.com/kiplagatcollins/fusion-orm/dialect"
 	"github.com/kiplagatcollins/fusion-orm/dialect/sqlite"
 	"github.com/kiplagatcollins/fusion-orm/logger"
+	"github.com/kiplagatcollins/fusion-orm/schema"
 )
 
 // openTestDB opens a SQLite database on a temp file (integration tests use
@@ -334,5 +335,38 @@ func TestStatementCloneIsolatesSettingsAndSQL(t *testing.T) {
 	}
 	if stmt.Settings == clone.Settings {
 		t.Fatal("clone shares the Settings map")
+	}
+}
+
+func TestSessionSchemaCacheAndStrictTags(t *testing.T) {
+	type article struct {
+		ID    int64  `fusion:"pk"`
+		Title string `fusion:"headline"`
+	}
+	db := openTestDB(t, &Config{
+		NamingStrategy: schema.NamingStrategy{SingularTable: true, TablePrefix: "app_"},
+		StrictTags:     true,
+	})
+
+	table, err := db.Parse(&article{})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if table.Name != "app_article" || table.Column("headline") == nil {
+		t.Errorf("table = %s, columns = %v", table.Name, table.DBNames)
+	}
+	again, err := db.Session(&Session{NewDB: true}).Parse(&article{})
+	if err != nil {
+		t.Fatalf("cached Parse: %v", err)
+	}
+	if again != table {
+		t.Error("sessions did not share the schema cache")
+	}
+
+	type bad struct {
+		Name string `fusion:"name,bogus:value"`
+	}
+	if _, err := db.Parse(&bad{}); !errors.Is(err, schema.ErrInvalidTag) {
+		t.Errorf("strict tag error = %v", err)
 	}
 }
