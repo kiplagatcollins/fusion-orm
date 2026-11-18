@@ -70,9 +70,9 @@ func inPlaceholders(n int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
-func applyPreloadArgs(db *DB, args []any) {
+func applyPreloadArgs(db *DB, args []any) *DB {
 	if len(args) == 0 {
-		return
+		return db
 	}
 	if _, ok := args[0].(func(*DB) *DB); ok {
 		for _, arg := range args {
@@ -80,9 +80,9 @@ func applyPreloadArgs(db *DB, args []any) {
 				db = fn(db)
 			}
 		}
-		return
+		return db
 	}
-	applyConds(db, args...)
+	return applyConds(db, args...)
 }
 
 // preload loads every requested relation in one query per level. Nested
@@ -187,7 +187,7 @@ func (db *DB) loadTargets(join *schema.Table, keys []any, match *schema.Field, m
 	if isUnscoped(db) {
 		child.Statement.Set("fusion:unscoped", true)
 	}
-	applyPreloadArgs(child, entry.Args)
+	child = applyPreloadArgs(child, entry.Args)
 
 	column := child.Statement.QuoteTo(matchColumn)
 	expr := column + " IN (" + inPlaceholders(len(keys)) + ")"
@@ -200,7 +200,7 @@ func (db *DB) loadTargets(join *schema.Table, keys []any, match *schema.Field, m
 		expr += " AND " + child.Statement.QuoteTo(polyType) + " = ?"
 		args = append(args, relValue)
 	}
-	child.Where(expr, args...)
+	child = child.Where(expr, args...)
 
 	dest := reflect.New(reflect.SliceOf(join.Type)).Interface()
 	child.Find(dest)
@@ -264,10 +264,10 @@ func (db *DB) loadM2M(sources []reflect.Value, rel *schema.Relation, entry *prel
 	if isUnscoped(db) {
 		child.Statement.Set("fusion:unscoped", true)
 	}
-	applyPreloadArgs(child, entry.Args)
+	child = applyPreloadArgs(child, entry.Args)
 	matchColumn := rel.ForeignKey.DBName
 	refColumn := child.Statement.QuoteTo(matchColumn)
-	child.Where(refColumn+" IN ("+inPlaceholders(len(refs))+")", refs...)
+	child = child.Where(refColumn+" IN ("+inPlaceholders(len(refs))+")", refs...)
 
 	dest := reflect.New(reflect.SliceOf(join.Type)).Interface()
 	child.Find(dest)

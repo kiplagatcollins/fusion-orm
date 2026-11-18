@@ -3,6 +3,7 @@ package fusion
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -113,4 +114,35 @@ func TestStmtCacheLRUAndTTL(t *testing.T) {
 		t.Errorf("cache size after remove = %d", cache.len())
 	}
 	cache.close()
+}
+
+type prepareErrorPool struct {
+	ConnPool
+	err error
+}
+
+func (p prepareErrorPool) PrepareContext(context.Context, string) (*sql.Stmt, error) {
+	return nil, p.err
+}
+
+func TestPreparedPoolPrepareError(t *testing.T) {
+	want := errors.New("prepare failed")
+	pool := newPreparedPool(prepareErrorPool{err: want}, 1, 0)
+	if _, err := pool.ExecContext(context.TODO(), `SELECT 1`); !errors.Is(err, want) {
+		t.Errorf("ExecContext = %v, want %v", err, want)
+	}
+	if _, err := pool.QueryContext(context.TODO(), `SELECT 1`); !errors.Is(err, want) {
+		t.Errorf("QueryContext = %v, want %v", err, want)
+	}
+}
+
+func TestPreparedTxWithoutCommitter(t *testing.T) {
+	db := openTestDB(t)
+	tx := &preparedTx{tx: db.Statement.ConnPool, cache: newStmtCache(1, 0)}
+	if err := tx.Commit(); !errors.Is(err, ErrInvalidTransaction) {
+		t.Errorf("Commit = %v, want ErrInvalidTransaction", err)
+	}
+	if err := tx.Rollback(); !errors.Is(err, ErrInvalidTransaction) {
+		t.Errorf("Rollback = %v, want ErrInvalidTransaction", err)
+	}
 }

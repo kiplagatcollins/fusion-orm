@@ -380,14 +380,10 @@ func (db *DB) Migrator(opts ...migrator.Option) (*migrator.Migrator, error) {
 
 // getInstance materializes the copy-on-write chain. clone == 1 (root or
 // NewDB session) builds a fresh Statement sharing the pool and context;
-// clone == 2 (mid-chain) clones the current Statement so clauses, SQL, and
-// settings survive while the receiver stays untouched. clone == 0 (a
-// statement after getInstance) is returned as-is.
+// clone == 2 (mid-chain) and clone == 0 (already materialized) both clone
+// the current Statement so clauses, SQL, and settings survive while the
+// receiver stays reusable after a finisher.
 func (db *DB) getInstance() *DB {
-	if db.clone == 0 {
-		return db
-	}
-
 	tx := &DB{Config: db.Config, Error: db.Error}
 	if db.clone == 1 {
 		tx.Statement = &Statement{

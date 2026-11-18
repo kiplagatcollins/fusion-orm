@@ -53,7 +53,9 @@ func (d *Dialector) Features() feature.Feature {
 		feature.FKDefaultOnAction |
 		feature.DeleteReturning |
 		feature.CreateIndexIfNotExists |
-		feature.Savepoint
+		feature.Savepoint |
+		feature.PragmaTableInfo |
+		feature.AutoIncrementClause
 }
 
 // Initialize opens the underlying database/sql pool.

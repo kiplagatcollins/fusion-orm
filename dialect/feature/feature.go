@@ -107,6 +107,25 @@ const (
 	// Savepoint enables SAVEPOINT / ROLLBACK TO / RELEASE statements used
 	// for nested transactions.
 	Savepoint
+
+	// Catalog and DDL features used by the migrator.
+
+	// PostgreSQLTypes enables PostgreSQL-native type names such as BOOLEAN,
+	// BIGINT, DOUBLE PRECISION, BYTEA, and JSONB.
+	PostgreSQLTypes
+	// InformationSchema exposes the SQL-standard information_schema catalog
+	// for table and column introspection.
+	InformationSchema
+	// PragmaTableInfo exposes SQLite's PRAGMA table_info introspection.
+	PragmaTableInfo
+	// DollarPlaceholder uses $1, $2, ... bind placeholders instead of ?.
+	DollarPlaceholder
+	// SerialColumn supports SERIAL/BIGSERIAL pseudo-types for auto-increment.
+	SerialColumn
+	// AutoIncrementClause requires the AUTOINCREMENT keyword after PRIMARY KEY.
+	AutoIncrementClause
+	// AlterColumnType supports ALTER COLUMN ... TYPE statements.
+	AlterColumnType
 )
 
 // Has reports whether all bits of flag are present in f.
@@ -204,6 +223,13 @@ var ordered = []entry{
 	{GeneratedIdentity, "GeneratedIdentity"},
 	{FKDefaultOnAction, "FKDefaultOnAction"},
 	{Savepoint, "Savepoint"},
+	{PostgreSQLTypes, "PostgreSQLTypes"},
+	{InformationSchema, "InformationSchema"},
+	{PragmaTableInfo, "PragmaTableInfo"},
+	{DollarPlaceholder, "DollarPlaceholder"},
+	{SerialColumn, "SerialColumn"},
+	{AutoIncrementClause, "AutoIncrementClause"},
+	{AlterColumnType, "AlterColumnType"},
 }
 
 var flag2str = func() map[Feature]string {

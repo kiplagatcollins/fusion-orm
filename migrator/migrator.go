@@ -5,6 +5,7 @@ package migrator
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
+	"github.com/kiplagatcollins/fusion-orm/dialect/feature"
 	"github.com/kiplagatcollins/fusion-orm/schema"
 )
 
@@ -82,34 +84,46 @@ func (m *Migrator) quote(ident string) string {
 	return string(m.dialector.QuoteTo(nil, ident))
 }
 
+func (m *Migrator) has(flag feature.Feature) bool {
+	return m.dialector.Features().Has(flag)
+}
+
+// ErrUnsupportedFeature reports a dialect that lacks a capability required
+// by a migration operation.
+var ErrUnsupportedFeature = errors.New("unsupported feature")
+
+func missingFeature(flag feature.Feature) error {
+	return fmt.Errorf("%w: %s", ErrUnsupportedFeature, flag.Name())
+}
+
 func (m *Migrator) sqlType(field *schema.Field) string {
 	if field.SQLType != "" {
 		return field.SQLType
 	}
-	pg := m.dialector.Name() == dialect.Postgres
+	pgTypes := m.has(feature.PostgreSQLTypes)
 	switch field.DataType {
 	case schema.DataTypeBool:
-		if pg {
+		if pgTypes {
 			return "BOOLEAN"
 		}
 		return "INTEGER"
 	case schema.DataTypeInt, schema.DataTypeUint:
-		if pg {
+		if pgTypes {
 			return "BIGINT"
 		}
 		return "INTEGER"
 	case schema.DataTypeFloat:
-		if pg {
+		if pgTypes {
 			return "DOUBLE PRECISION"
 		}
 		return "REAL"
 	case schema.DataTypeBytes:
-		if pg {
+		if pgTypes {
 			return "BYTEA"
 		}
 		return "BLOB"
 	case schema.DataTypeJSON:
-		if pg {
+		if pgTypes {
 			return "JSONB"
 		}
 		return "TEXT"
@@ -122,9 +136,8 @@ func (m *Migrator) sqlType(field *schema.Field) string {
 
 func (m *Migrator) columnDefinition(field *schema.Field) string {
 	typ := m.sqlType(field)
-	pg := m.dialector.Name() == dialect.Postgres
 	primary := field.PrimaryKey
-	if primary && field.AutoIncrement && pg {
+	if primary && field.AutoIncrement && m.has(feature.SerialColumn) {
 		typ = "BIGSERIAL"
 	}
 	var b strings.Builder
@@ -141,8 +154,11 @@ func (m *Migrator) columnDefinition(field *schema.Field) string {
 	if primary && !field.AutoIncrement {
 		b.WriteString(" PRIMARY KEY")
 	}
-	if primary && field.AutoIncrement && !pg {
-		b.WriteString(" PRIMARY KEY AUTOINCREMENT")
+	if primary && field.AutoIncrement {
+		b.WriteString(" PRIMARY KEY")
+		if m.has(feature.AutoIncrementClause) {
+			b.WriteString(" AUTOINCREMENT")
+		}
 	}
 	return b.String()
 }
@@ -150,10 +166,13 @@ func (m *Migrator) columnDefinition(field *schema.Field) string {
 // HasTable reports whether name exists.
 func (m *Migrator) HasTable(ctx context.Context, name string) (bool, error) {
 	var query string
-	if m.dialector.Name() == dialect.Postgres {
+	switch {
+	case m.has(feature.InformationSchema):
 		query = `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = $1 AND table_schema = current_schema())`
-	} else {
+	case m.has(feature.PragmaTableInfo):
 		query = `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`
+	default:
+		return false, missingFeature(feature.InformationSchema)
 	}
 	var exists bool
 	err := m.db.QueryRowContext(ctx, query, name).Scan(&exists)
@@ -211,7 +230,7 @@ func (m *Migrator) createIndexes(ctx context.Context, table *schema.Table) error
 
 // ColumnTypes lists the columns of an existing table.
 func (m *Migrator) ColumnTypes(ctx context.Context, name string) ([]Column, error) {
-	if m.dialector.Name() == dialect.Postgres {
+	if m.has(feature.InformationSchema) {
 		rows, err := m.db.QueryContext(ctx,
 			`SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = $1 AND table_schema = current_schema() ORDER BY ordinal_position`, name)
 		if err != nil {
@@ -229,6 +248,9 @@ func (m *Migrator) ColumnTypes(ctx context.Context, name string) ([]Column, erro
 			cols = append(cols, col)
 		}
 		return cols, rows.Err()
+	}
+	if !m.has(feature.PragmaTableInfo) {
+		return nil, missingFeature(feature.InformationSchema)
 	}
 	rows, err := m.db.QueryContext(ctx, fmt.Sprintf("PRAGMA table_info(%s)", m.quote(name)))
 	if err != nil {
@@ -268,7 +290,7 @@ func (m *Migrator) DropColumn(ctx context.Context, table, column string) error {
 
 // AlterColumn changes a column's type where the dialect supports it.
 func (m *Migrator) AlterColumn(ctx context.Context, table string, field *schema.Field) error {
-	if m.dialector.Name() != dialect.Postgres {
+	if !m.has(feature.AlterColumnType) {
 		return nil
 	}
 	stmt := fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s",
@@ -384,7 +406,7 @@ func (m *Migrator) record(ctx context.Context, migration Migration) error {
 		return nil
 	}
 	stmt := fmt.Sprintf("INSERT INTO %s (version, name, applied_at) VALUES (?, ?, ?)", m.quote(m.lockTable))
-	if m.dialector.Name() == dialect.Postgres {
+	if m.has(feature.DollarPlaceholder) {
 		stmt = fmt.Sprintf("INSERT INTO %s (version, name, applied_at) VALUES ($1, $2, $3)", m.quote(m.lockTable))
 	}
 	_, err := m.db.ExecContext(ctx, stmt, migration.Version, migration.Name, time.Now().UTC())
@@ -396,7 +418,7 @@ func (m *Migrator) forget(ctx context.Context, version int64) error {
 		return nil
 	}
 	stmt := fmt.Sprintf("DELETE FROM %s WHERE version = ?", m.quote(m.lockTable))
-	if m.dialector.Name() == dialect.Postgres {
+	if m.has(feature.DollarPlaceholder) {
 		stmt = fmt.Sprintf("DELETE FROM %s WHERE version = $1", m.quote(m.lockTable))
 	}
 	_, err := m.db.ExecContext(ctx, stmt, version)

@@ -67,6 +67,7 @@ func beginDefaultTx(db *DB) {
 	if _, ok := db.Statement.ConnPool.(*sql.Tx); ok {
 		return
 	}
+	original := db.Statement.ConnPool
 	tx := db.Begin()
 	if tx.Error != nil {
 		db.AddError(fmt.Errorf("begin transaction: %w", tx.Error))
@@ -74,6 +75,7 @@ func beginDefaultTx(db *DB) {
 	}
 	db.Statement.ConnPool = tx.Statement.ConnPool
 	db.Statement.Set("fusion:tx", tx)
+	db.Statement.Set("fusion:tx:pool", original)
 }
 
 func commitOrRollback(db *DB) {
@@ -81,14 +83,22 @@ func commitOrRollback(db *DB) {
 	if !ok {
 		return
 	}
-	tx := value.(*DB)
-	db.Statement.Set("fusion:tx", nil)
-	if db.Error != nil {
-		tx.Rollback()
+	tx, ok := value.(*DB)
+	if !ok {
+		db.Statement.Delete("fusion:tx")
 		return
 	}
-	if err := tx.Commit().Error; err != nil {
+	db.Statement.Delete("fusion:tx")
+	if db.Error != nil {
+		tx.Rollback()
+	} else if err := tx.Commit().Error; err != nil {
 		db.AddError(fmt.Errorf("commit transaction: %w", err))
+	}
+	if value, ok := db.Statement.Get("fusion:tx:pool"); ok {
+		if original, ok := value.(ConnPool); ok {
+			db.Statement.ConnPool = original
+		}
+		db.Statement.Delete("fusion:tx:pool")
 	}
 }
 

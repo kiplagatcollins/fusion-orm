@@ -57,10 +57,10 @@ func TestName(t *testing.T) {
 }
 
 func TestDeclaredFlagCount(t *testing.T) {
-	// The roadmap budgets ~35 flags; guard against accidental drop or
+	// The roadmap budgets ~40 flags; guard against accidental drop or
 	// runaway growth of the vocabulary.
-	if n := len(ordered); n < 30 || n > 40 {
-		t.Fatalf("declared flags = %d, want 30..40", n)
+	if n := len(ordered); n < 30 || n > 48 {
+		t.Fatalf("declared flags = %d, want 30..48", n)
 	}
 	seen := map[Feature]bool{}
 	for _, e := range ordered {

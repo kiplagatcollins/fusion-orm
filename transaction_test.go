@@ -354,3 +354,26 @@ func TestShippedDialectsDeclareSavepoint(t *testing.T) {
 		t.Error("postgres missing feature.Savepoint")
 	}
 }
+
+func TestReusableChainAfterImplicitTransaction(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.Exec(`CREATE TABLE chain_users (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	chain := db.Table("chain_users")
+	if err := chain.Create(&struct {
+		ID   int64 `fusion:"pk,autoincrement"`
+		Name string
+	}{Name: "ada"}).Error; err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var count int64
+	if err := chain.Model(&struct {
+		ID int64 `fusion:"pk"`
+	}{}).Count(&count).Error; err != nil {
+		t.Fatalf("Count on reused chain: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("count = %d, want 1", count)
+	}
+}

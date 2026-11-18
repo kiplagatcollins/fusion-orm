@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: fusion
+          POSTGRES_PASSWORD: fusion
+          POSTGRES_DB: fusion_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fusion"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      FUSION_TEST_PG_DSN: postgres://fusion:fusion@localhost:5432/fusion_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Vet
+        run: go vet ./...
+      - name: Lint
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.14.0
+          args: --timeout=5m
+      - name: Test
+        run: go test ./...
+      - name: Golden SQL
+        run: go test ./clause/... -run TestGolden
+      - name: Race detector
+        run: go test -race ./...
+      - name: Alloc benchmarks
+        run: go test -run '^$' -bench . -benchmem ./...

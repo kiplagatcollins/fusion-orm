@@ -50,7 +50,7 @@ func (db *DB) Find(dest any, conds ...any) *DB {
 	if tx.Statement.Model == nil {
 		tx.Statement.Model = dest
 	}
-	applyConds(tx, conds...)
+	tx = applyConds(tx, conds...)
 	applyScopes(tx)
 	tx.callbacks.query.Execute(tx)
 	return tx
@@ -70,7 +70,7 @@ func (db *DB) Take(dest any, conds ...any) *DB {
 	if tx.Statement.Model == nil {
 		tx.Statement.Model = dest
 	}
-	applyConds(tx, conds...)
+	tx = applyConds(tx, conds...)
 	tx.Statement.AddClause(clause.Limit{N: 1})
 	tx.callbacks.query.Execute(tx)
 	return tx
@@ -88,7 +88,7 @@ func (db *DB) firstWithOrder(dest any, direction string, conds ...any) *DB {
 	if tx.Statement.Model == nil {
 		tx.Statement.Model = dest
 	}
-	applyConds(tx, conds...)
+	tx = applyConds(tx, conds...)
 	if table, err := db.resolveTable(tx.Statement.Model); err == nil {
 		if pk := primaryField(table); pk != nil {
 			tx.Statement.AddClause(clause.OrderBy{Columns: []string{pk.DBName + " " + direction}})
@@ -99,35 +99,35 @@ func (db *DB) firstWithOrder(dest any, direction string, conds ...any) *DB {
 	return tx
 }
 
-func applyConds(db *DB, conds ...any) {
+func applyConds(db *DB, conds ...any) *DB {
 	table, err := db.modelTable()
 	if err != nil {
-		return
+		return db
 	}
 	if len(conds) > 0 {
 		if query, ok := conds[0].(string); ok && strings.Contains(query, "?") {
-			db.Where(query, conds[1:]...)
-			return
+			return db.Where(query, conds[1:]...)
 		}
 	}
 	for _, cond := range conds {
 		switch v := cond.(type) {
 		case string:
-			db.Where(v)
+			db = db.Where(v)
 		case int:
 			if pk := primaryField(table); pk != nil {
-				db.Where(pk.DBName+" = ?", int64(v))
+				db = db.Where(pk.DBName+" = ?", int64(v))
 			}
 		case int64:
 			if pk := primaryField(table); pk != nil {
-				db.Where(pk.DBName+" = ?", v)
+				db = db.Where(pk.DBName+" = ?", v)
 			}
 		default:
 			if cond != nil {
-				db.Where(cond)
+				db = db.Where(cond)
 			}
 		}
 	}
+	return db
 }
 
 // Update sets one column on matching rows. A WHERE clause (or a model with
@@ -219,7 +219,7 @@ func (db *DB) Delete(value any, conds ...any) *DB {
 			tx.Statement.Model = value
 		}
 	}
-	applyConds(tx, conds...)
+	tx = applyConds(tx, conds...)
 	tx.callbacks.delete.Execute(tx)
 	return tx
 }
@@ -356,7 +356,7 @@ func (db *DB) FirstOrInit(dest any, conds ...any) *DB {
 		return found
 	}
 	tx := db.getInstance()
-	applyConds(tx, conds...)
+	tx = applyConds(tx, conds...)
 	table, err := db.resolveTable(dest)
 	if err != nil {
 		tx.AddError(err)

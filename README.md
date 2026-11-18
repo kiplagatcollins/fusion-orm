@@ -1,0 +1,163 @@
+# fusion-orm
+
+A Go ORM that pairs a SQL-first query engine with a fluent chaining API, a
+callback pipeline, and first-class generics. Built on `database/sql`; ships
+with pure-Go SQLite and pgx/v5 PostgreSQL dialects.
+
+```sh
+go get github.com/kiplagatcollins/fusion-orm
+```
+
+Module path: `github.com/kiplagatcollins/fusion-orm` (Go 1.27+).
+
+## Quick start
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/kiplagatcollins/fusion-orm"
+	"github.com/kiplagatcollins/fusion-orm/dialect/sqlite"
+	"github.com/kiplagatcollins/fusion-orm/migrator"
+)
+
+type User struct {
+	ID   int64  `fusion:"pk,autoincrement"`
+	Name string `fusion:"notnull"`
+}
+
+func main() {
+	db, err := fusion.Open(sqlite.Open("app.db"))
+	if err != nil {
+		panic(err)
+	}
+	m, err := db.Migrator()
+	if err != nil {
+		panic(err)
+	}
+	if err := m.AutoMigrate(context.Background(), &User{}); err != nil {
+		panic(err)
+	}
+
+	user := User{Name: "Ada"}
+	if err := db.Create(&user).Error; err != nil {
+		panic(err)
+	}
+	var got User
+	if err := db.First(&got, user.ID).Error; err != nil {
+		panic(err)
+	}
+	fmt.Println(got.Name)
+}
+```
+
+More runnable flows live in [`example_test.go`](example_test.go).
+
+## Features
+
+- **Query first** — chainable `Where/Or/Order/Limit/Offset/Select/Distinct`,
+  struct and map conditions, `Scopes`, raw `Clauses`, and stable `ToSQL`.
+- **CRUD parity** — `Create/Save/Updates/Delete/First/Take/Last/Find`,
+  `FindInBatches`, `FirstOrInit/FirstOrCreate`, `Pluck`, `Row/Rows/Scan`.
+- **Batch inserts** — one statement with `RETURNING` (PG) or `LastInsertID`
+  backfill (SQLite), configurable via `CreateBatchSize`.
+- **Relations** — `Preload` (batched, nested, apply functions) and inline
+  `Joins` for has-one, has-many, belongs-to, many-to-many, and polymorphic
+  relations; `Association` API and association callbacks.
+- **Generics** — `fusion.G[T]` exposes checked chain and finisher interfaces
+  with typed return values.
+- **Soft delete** — embed `fusion.DeletedAt`; `Unscoped` and `Restore` for
+  explicit access to soft-deleted rows.
+- **Prepared statements** — optional LRU+TTL cache with `ErrBadConn` recovery
+  and transaction-aware wrappers.
+- **Error translation** — `Config.TranslateError` maps driver constraint
+  errors onto `ErrDuplicatedKey`, `ErrForeignKeyViolated`, and
+  `ErrCheckConstraintViolated`.
+- **Migrations** — `db.Migrator().AutoMigrate` for inspect/diff/ALTER plus
+  versioned Go and numbered SQL migrations guarded by a lock table.
+- **Observability** — `QueryHook` wrappers, `SlogQueryHook`, slog logger
+  adapter, slow-query tracing, and a no-N+1 test suite.
+- **Guardrails** — global `Update`/`Delete` require a `WHERE` clause unless
+  `Config.AllowGlobalUpdate` is set; all branchable errors are sentinels.
+
+## Comparison
+
+Indicative positioning; see each project's documentation for its current API.
+
+| Capability | fusion-orm | bun | gorm |
+|---|---|---|---|
+| API style | fluent chain + SQL-first clauses | query builder + hooks | fluent chain + callbacks |
+| Generics facade | `fusion.G[T]` with checked interfaces | generic ` bun.NewSelectModel` helpers | `gorm.G[T]` (v1.25+) |
+| Dialects shipped | SQLite, PostgreSQL | SQLite, PostgreSQL, MySQL, MSSQL | SQLite, PostgreSQL, MySQL, MSSQL, ClickHouse |
+| Batched preload | yes, one query per relation | yes (`with`) | yes (`Preload`) |
+| Inline relation joins | `Joins("Profile")`, dotted-column scan | `q.Join` | `Joins` |
+| Association API | `Find/Append/Replace/Delete/Clear/Count` | relation helpers | `Association` |
+| Soft delete | `fusion.DeletedAt`, `Unscoped`, `Restore` | `deleted_at` soft-delete option | `gorm.DeletedAt`, `Unscoped` |
+| Prepared statements | LRU+TTL built in | connection-level | config option |
+| Error sentinels | `errors.Is` throughout | dialect-specific | `gorm.Err*` + translated duplicates |
+| Migrations | built-in AutoMigrate + versioned Go/SQL | external (bun migrate) | built-in AutoMigrate |
+| Query hooks | `QueryHook` + slog adapter | query hooks | callbacks + plugins |
+| Feature flags | explicit capability bitset | per-dialect switches | per-dialect branches |
+
+## Configuration
+
+`Config` is copied on session derivatives, so `Session`, `WithContext`,
+`Debug`, and `DryRun` never mutate the root. Notable options:
+
+```go
+db, err := fusion.Open(sqlite.Open("app.db"), &fusion.Config{
+	TranslateError:        true,
+	PrepareStmt:           true,
+	PreparedStmtCacheSize: 500,
+	StrictTags:            true,
+	FullSaveAssociations:  true,
+})
+```
+
+Per-call hooks and sessions:
+
+```go
+db = db.QueryHook(fusion.SlogQueryHook{})
+ctxDB := db.WithContext(ctx).Debug()
+sql := db.ToSQL(func(tx *fusion.DB) *fusion.DB {
+	return tx.Model(&User{}).Where("name = ?", "Ada").Find(&[]User{})
+})
+```
+
+## Migrations
+
+```go
+m, err := db.Migrator(migrator.WithTableName("schema_migrations"))
+if err != nil {
+	panic(err)
+}
+if err := m.AutoMigrate(ctx, &User{}); err != nil {
+	panic(err)
+}
+if err := m.Migrate(ctx, 1, createUp, createDown); err != nil {
+	panic(err)
+}
+```
+
+`migrator.LoadSQLFiles(dir)` loads numbered `1_name.up.sql` /
+`1_name.down.sql` pairs; register them with `m.Register`.
+
+## Testing
+
+```sh
+go test ./...
+go test -race ./...
+go test ./clause/... -run TestGolden
+go test -run '^$' -bench . -benchmem ./...
+```
+
+Set `FUSION_TEST_PG_DSN` to run the PostgreSQL integration suites; they are
+skipped when it is unset. CI runs vet, golangci-lint, tests, race detector,
+golden SQL checks, and alloc benchmarks, with a PostgreSQL service.
+
+## License
+
+MIT.

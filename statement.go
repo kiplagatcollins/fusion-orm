@@ -106,6 +106,13 @@ func (stmt *Statement) Get(key string) (any, bool) {
 	return stmt.Settings.Load(key)
 }
 
+// Delete removes a statement setting.
+func (stmt *Statement) Delete(key string) {
+	if stmt.Settings != nil {
+		stmt.Settings.Delete(key)
+	}
+}
+
 func (stmt *Statement) dialect() dialect.Dialector { return stmt.DB.Dialector }
 
 // buildOrder is the canonical clause order. Custom clauses keep their

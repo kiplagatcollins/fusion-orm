@@ -66,12 +66,14 @@ Phases below are the milestone detail with acceptance criteria.
 
 **Acceptance:** CI green; docs complete; v0.1 tag.
 
+**Status:** CI, docs, and verification complete; v0.1 tag awaits maintainer approval.
+
 ## Backend/quality backlog (cross-cutting)
 
-- Feature-flag audit: every dialect branch must map to a named flag (no string sniffing).
-- pgx/v5 stdlib quirks: `RETURNING` + batch exec verification against real PG.
+- ~~Feature-flag audit: every dialect branch must map to a named flag (no string sniffing).~~ **Done in M6.**
+- ~~pgx/v5 stdlib quirks: `RETURNING` + batch exec verification against real PG.~~ **Done in M6** via env-gated PG suite.
 - modernc.org/sqlite edge cases: multiple statements per exec, busy_timeout handling.
-- Decide `Scopes` vs `Apply` naming before Phase 3 lands (PRD open question).
+- ~~Decide `Scopes` vs `Apply` naming before Phase 3 lands (PRD open question).~~ **Resolved:** keep `Scopes`.
 - Consider `unsafe` zero-copy helpers only if benchmarks demand them (deferred).
 
 ## Recommended sequencing

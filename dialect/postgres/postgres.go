@@ -60,7 +60,12 @@ func (d *Dialector) Features() feature.Feature {
 		feature.MergeReturning |
 		feature.AlterColumnExists |
 		feature.CreateIndexIfNotExists |
-		feature.Savepoint
+		feature.Savepoint |
+		feature.PostgreSQLTypes |
+		feature.InformationSchema |
+		feature.DollarPlaceholder |
+		feature.SerialColumn |
+		feature.AlterColumnType
 }
 
 // Initialize opens the underlying database/sql pool.

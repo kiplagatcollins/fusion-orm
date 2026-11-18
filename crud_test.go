@@ -355,7 +355,7 @@ func TestSessionParseStrictTagsStillWorks(t *testing.T) {
 }
 
 func TestSchemaSentinelReexport(t *testing.T) {
-	if !errors.Is(schema.ErrInvalidTag, ErrInvalidTag) {
+	if !errors.Is(ErrInvalidTag, schema.ErrInvalidTag) {
 		t.Error("ErrInvalidTag alias mismatch")
 	}
 }
