@@ -446,3 +446,15 @@ func TestHooksFire(t *testing.T) {
 		t.Errorf("hooks = %s, want %s", got, want)
 	}
 }
+
+func TestSaveUpdatesExistingRecord(t *testing.T) {
+	db := setupCRUD(t)
+	insertFixtures(t, db)
+	if err := db.Save(&crudUser{ID: 1, Name: "saved"}).Error; err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var got crudUser
+	if err := db.First(&got, 1).Error; err != nil || got.Name != "saved" {
+		t.Errorf("saved row = %+v, %v", got, err)
+	}
+}

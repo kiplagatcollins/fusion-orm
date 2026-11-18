@@ -85,6 +85,11 @@ type Config struct {
 	tables *schema.Tables
 	// callbacks holds the CRUD processors (shared by derivatives).
 	callbacks *CallbackManager
+	// joinTables holds SetupJoinTable overrides (shared by derivatives).
+	joinTables *joinTableRegistry
+	// FullSaveAssociations makes association saves use Save (not Create) for
+	// records that already carry a primary key.
+	FullSaveAssociations bool
 }
 
 // Option configures Open. *Config implements Option, so a full config can be
@@ -122,6 +127,9 @@ type Session struct {
 	Logger logger.Interface
 	// NowFunc replaces the derivative's timestamp source.
 	NowFunc func() time.Time
+	// FullSaveAssociations saves associated records with Save instead of
+	// Create on the derivative.
+	FullSaveAssociations bool
 }
 
 // DB is a session handle: the root instance returned by Open, or a
@@ -158,6 +166,9 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 	}
 
 	config.Dialector = d
+	if config.NamingStrategy == nil {
+		config.NamingStrategy = schema.NamingStrategy{}
+	}
 	if config.Logger == nil {
 		config.Logger = logger.Default
 	}
@@ -165,6 +176,7 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 		config.Logger.Warn(context.Background(), "unknown fusion tag key %q", key)
 	})
 	config.callbacks = newCallbackManager()
+	config.joinTables = &joinTableRegistry{}
 	if config.NowFunc == nil {
 		config.NowFunc = func() time.Time { return time.Now().Local() }
 	}
@@ -249,6 +261,9 @@ func (db *DB) Session(config *Session) *DB {
 	}
 	if config.NowFunc != nil {
 		txConfig.NowFunc = config.NowFunc
+	}
+	if config.FullSaveAssociations {
+		txConfig.FullSaveAssociations = true
 	}
 
 	if config.Context != nil {

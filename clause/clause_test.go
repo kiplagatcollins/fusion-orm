@@ -103,6 +103,27 @@ func TestGoldenClauses(t *testing.T) {
 			`ON CONFLICT ("email") DO UPDATE SET "name" = EXCLUDED."name"`, nil,
 		},
 		{
+			"join relation", Join{
+				Type: "LEFT", Table: "profiles", Alias: "profile",
+				On: []Expression{Expr(`"users"."id" = "profile"."user_id"`)},
+			},
+			`LEFT JOIN "profiles" "profile" ON "users"."id" = "profile"."user_id"`,
+			`LEFT JOIN "profiles" "profile" ON "users"."id" = "profile"."user_id"`, nil,
+		},
+		{
+			"join raw", Join{HasRaw: true, Raw: Expr(`LEFT JOIN "profiles" ON "profiles"."user_id" = ?`, 7)},
+			`LEFT JOIN "profiles" ON "profiles"."user_id" = ?`,
+			`LEFT JOIN "profiles" ON "profiles"."user_id" = $1`, []any{7},
+		},
+		{
+			"join set", Joins{Items: []Join{
+				{Type: "LEFT", Table: "a", Alias: "x"},
+				{HasRaw: true, Raw: Expr(`INNER JOIN "b" ON "b"."id" = ?`, 7)},
+			}},
+			`LEFT JOIN "a" "x" INNER JOIN "b" ON "b"."id" = ?`,
+			`LEFT JOIN "a" "x" INNER JOIN "b" ON "b"."id" = $1`, []any{7},
+		},
+		{
 			"returning", Returning{Columns: []string{"id"}},
 			`RETURNING "id"`, `RETURNING "id"`, nil,
 		},

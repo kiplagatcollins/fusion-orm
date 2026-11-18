@@ -45,6 +45,11 @@ type Statement struct {
 	SkipHooks bool
 	// CreateBatchSize bounds rows per INSERT statement (0 = all rows).
 	CreateBatchSize int
+	// Preloads holds requested relation paths; each path is loaded in one
+	// batched query, with nested paths loaded after their parent.
+	Preloads []*preloadEntry
+	// Joins holds explicit raw joins and relation names to LEFT JOIN.
+	Joins []joinEntry
 }
 
 // AddClause registers or replaces c, preserving its first-seen build order.
@@ -99,7 +104,7 @@ func (stmt *Statement) dialect() dialect.Dialector { return stmt.DB.Dialector }
 // buildOrder is the canonical clause order. Custom clauses keep their
 // insertion position after the standard ones.
 var buildOrder = []string{
-	"with", "select", "insert", "update", "delete", "from", "set", "values",
+	"with", "select", "insert", "update", "delete", "from", "join", "set", "values",
 	"on_conflict", "where", "order", "limit", "offset", "locking", "returning",
 }
 
@@ -170,6 +175,8 @@ func (stmt *Statement) clone() *Statement {
 		RaiseErrorOnNotFound: stmt.RaiseErrorOnNotFound,
 		SkipHooks:            stmt.SkipHooks,
 		CreateBatchSize:      stmt.CreateBatchSize,
+		Preloads:             clonePreloads(stmt.Preloads),
+		Joins:                append([]joinEntry(nil), stmt.Joins...),
 	}
 	if stmt.SQL != nil {
 		newStmt.SQL = append([]byte(nil), stmt.SQL...)

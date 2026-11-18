@@ -6,28 +6,36 @@ package callbacks
 // Create is the default create chain.
 func Create() []string {
 	return []string{
-		"fusion:begin_tx", "fusion:before_create", "fusion:create",
-		"fusion:after_create", "fusion:commit_or_rollback",
+		"fusion:begin_tx", "fusion:before_create",
+		"fusion:save_before_associations", "fusion:create",
+		"fusion:save_after_associations", "fusion:after_create",
+		"fusion:commit_or_rollback",
 	}
 }
 
 // Query is the default query chain.
 func Query() []string {
-	return []string{"fusion:build_query", "fusion:before_query", "fusion:query", "fusion:after_query"}
+	return []string{
+		"fusion:build_query", "fusion:before_query", "fusion:query",
+		"fusion:preload", "fusion:after_query",
+	}
 }
 
 // Update is the default update chain.
 func Update() []string {
 	return []string{
-		"fusion:begin_tx", "fusion:before_update", "fusion:update",
-		"fusion:after_update", "fusion:commit_or_rollback",
+		"fusion:begin_tx", "fusion:before_update",
+		"fusion:save_before_associations", "fusion:update",
+		"fusion:save_after_associations", "fusion:after_update",
+		"fusion:commit_or_rollback",
 	}
 }
 
 // Delete is the default delete chain.
 func Delete() []string {
 	return []string{
-		"fusion:begin_tx", "fusion:before_delete", "fusion:delete",
+		"fusion:begin_tx", "fusion:before_delete",
+		"fusion:delete_before_associations", "fusion:delete",
 		"fusion:after_delete", "fusion:commit_or_rollback",
 	}
 }

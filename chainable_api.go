@@ -8,6 +8,90 @@ import (
 	"github.com/kiplagatcollins/fusion-orm/clause"
 )
 
+// preloadEntry is one node of a dotted preload path. Args holds apply
+// functions, string conditions, or PK values for the relation's query.
+type preloadEntry struct {
+	Field    string
+	Args     []any
+	Children []*preloadEntry
+}
+
+func clonePreloads(entries []*preloadEntry) []*preloadEntry {
+	if entries == nil {
+		return nil
+	}
+	out := make([]*preloadEntry, len(entries))
+	for i, entry := range entries {
+		copyEntry := *entry
+		copyEntry.Args = append([]any(nil), entry.Args...)
+		copyEntry.Children = clonePreloads(entry.Children)
+		out[i] = &copyEntry
+	}
+	return out
+}
+
+func addPreload(entries []*preloadEntry, parts []string, args []any) []*preloadEntry {
+	if len(parts) == 0 {
+		return entries
+	}
+	name := strings.TrimSpace(parts[0])
+	if name == "" {
+		return addPreload(entries, parts[1:], args)
+	}
+	var entry *preloadEntry
+	for _, existing := range entries {
+		if strings.EqualFold(existing.Field, name) {
+			entry = existing
+			break
+		}
+	}
+	if entry == nil {
+		entry = &preloadEntry{Field: name}
+		entries = append(entries, entry)
+	}
+	if len(parts) == 1 && len(args) > 0 && len(entry.Args) == 0 {
+		entry.Args = append([]any(nil), args...)
+	}
+	if len(parts) > 1 {
+		entry.Children = addPreload(entry.Children, parts[1:], args)
+	}
+	return entries
+}
+
+// joinEntry is a raw JOIN expression or a named relation to LEFT JOIN.
+type joinEntry struct {
+	Relation string
+	Raw      clause.Expression
+	HasRaw   bool
+}
+
+// Preload requests a relation (or nested dotted path) to be loaded in one
+// batched query after the main query. Args may be a func(*DB) *DB apply
+// function, a SQL condition with args, or primary-key values.
+func (db *DB) Preload(query string, args ...any) *DB {
+	tx := db.getInstance()
+	tx.Statement.Preloads = addPreload(tx.Statement.Preloads, strings.Split(query, "."), args)
+	return tx
+}
+
+// Joins adds a raw JOIN expression, or LEFT JOINs a named has-one/belongs-to
+// relation and selects its columns as alias__column for dotted scanning.
+func (db *DB) Joins(query string, args ...any) *DB {
+	tx := db.getInstance()
+	q := strings.TrimSpace(query)
+	upper := strings.ToUpper(q)
+	if strings.HasPrefix(upper, "JOIN ") || strings.HasPrefix(upper, "LEFT ") ||
+		strings.HasPrefix(upper, "RIGHT ") || strings.HasPrefix(upper, "INNER ") ||
+		strings.HasPrefix(upper, "CROSS ") {
+		tx.Statement.Joins = append(tx.Statement.Joins, joinEntry{
+			Raw: clause.Expr(q, args...), HasRaw: true,
+		})
+	} else {
+		tx.Statement.Joins = append(tx.Statement.Joins, joinEntry{Relation: q})
+	}
+	return tx
+}
+
 // Model sets the model used to derive table/column metadata.
 func (db *DB) Model(value any) *DB {
 	tx := db.getInstance()

@@ -38,6 +38,14 @@ func defaultCallback(name string) Callback {
 		return buildQuery
 	case "fusion:query":
 		return queryRows
+	case "fusion:preload":
+		return func(db *DB) { db.preload() }
+	case "fusion:save_before_associations":
+		return saveBeforeAssociations
+	case "fusion:save_after_associations":
+		return saveAfterAssociations
+	case "fusion:delete_before_associations":
+		return deleteBeforeAssociations
 	case "fusion:create":
 		return insertRows
 	case "fusion:update":
@@ -105,6 +113,10 @@ func buildQuery(db *DB) {
 		db.AddError(err)
 		return
 	}
+	if err := applyJoins(db, table); err != nil {
+		db.AddError(err)
+		return
+	}
 	if db.Statement.Clause("from") == nil {
 		db.Statement.AddClause(clause.From{Table: db.tableName(table)})
 	}
@@ -146,6 +158,7 @@ func queryRows(db *DB) {
 	if scanErr != nil {
 		db.AddError(fmt.Errorf("scan %s: %w", table.Name, scanErr))
 	}
+	pruneJoinedRelations(db, table, db.Statement.Dest)
 	db.RowsAffected = int64(count)
 	if count == 0 && db.Statement.RaiseErrorOnNotFound && db.Error == nil {
 		db.AddError(ErrRecordNotFound)

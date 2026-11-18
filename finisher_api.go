@@ -140,7 +140,10 @@ func (db *DB) Update(column string, value any) *DB {
 // a primary key) is required unless AllowGlobalUpdate is set.
 func (db *DB) Updates(values any) *DB {
 	tx := db.getInstance()
-	table, err := db.modelTable()
+	if tx.Statement.Model == nil && tx.Statement.Dest == nil {
+		tx.Statement.Model = values
+	}
+	table, err := tx.modelTable()
 	if err != nil {
 		tx.AddError(err)
 		return tx
