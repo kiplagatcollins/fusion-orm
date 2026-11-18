@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/clause"
 	"github.com/kiplagatcollins/fusion-orm/dialect/feature"
@@ -117,6 +116,7 @@ func buildQuery(db *DB) {
 		db.AddError(err)
 		return
 	}
+	injectSoftDeleteFilter(db, table)
 	if db.Statement.Clause("from") == nil {
 		db.Statement.AddClause(clause.From{Table: db.tableName(table)})
 	}
@@ -145,11 +145,9 @@ func queryRows(db *DB) {
 		return
 	}
 	ctx := statementContext(db.Statement)
-	begin := time.Now()
-	rows, err := db.Statement.ConnPool.QueryContext(ctx, string(db.Statement.SQL), db.Statement.Vars...)
+	rows, err := db.queryContext(ctx, string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("query %s: %w", table.Name, err))
-		trace(db, ctx, begin, string(db.Statement.SQL), db.Statement.Vars, err)
 		return
 	}
 	defer rows.Close()
@@ -163,14 +161,13 @@ func queryRows(db *DB) {
 	if count == 0 && db.Statement.RaiseErrorOnNotFound && db.Error == nil {
 		db.AddError(ErrRecordNotFound)
 	}
-	trace(db, ctx, begin, string(db.Statement.SQL), db.Statement.Vars, db.Error)
 }
 
 func queryRowsForRow(db *DB) {
 	if db.Config.DryRun {
 		return
 	}
-	rows, err := db.Statement.ConnPool.QueryContext(statementContext(db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
+	rows, err := db.queryContext(statementContext(db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("query rows: %w", err))
 		return
@@ -186,9 +183,7 @@ func execRaw(db *DB) {
 }
 
 func (db *DB) execSQL(sql string, vars []any) {
-	ctx := statementContext(db.Statement)
-	begin := time.Now()
-	result, err := db.Statement.ConnPool.ExecContext(ctx, sql, vars...)
+	result, err := db.execContext(statementContext(db.Statement), sql, vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("exec %s: %w", firstSQLWord(sql), err))
 	} else if result != nil {
@@ -196,7 +191,6 @@ func (db *DB) execSQL(sql string, vars []any) {
 			db.RowsAffected += n
 		}
 	}
-	trace(db, ctx, begin, sql, vars, err)
 }
 
 func firstSQLWord(sql string) string {
@@ -304,12 +298,9 @@ func backfillFromReturning(db *DB, values []reflect.Value, table *schema.Table) 
 	if pk == nil {
 		return
 	}
-	ctx := statementContext(db.Statement)
-	begin := time.Now()
-	rows, err := db.Statement.ConnPool.QueryContext(ctx, string(db.Statement.SQL), db.Statement.Vars...)
+	rows, err := db.queryContext(statementContext(db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("returning id: %w", err))
-		trace(db, ctx, begin, string(db.Statement.SQL), db.Statement.Vars, err)
 		return
 	}
 	defer rows.Close()
@@ -324,7 +315,6 @@ func backfillFromReturning(db *DB, values []reflect.Value, table *schema.Table) 
 		i++
 	}
 	db.RowsAffected += int64(i)
-	trace(db, ctx, begin, string(db.Statement.SQL), db.Statement.Vars, db.Error)
 }
 
 func backfillFromLastInsertID(db *DB, values []reflect.Value, table *schema.Table) {
@@ -423,10 +413,13 @@ func deleteRows(db *DB) {
 		db.AddError(err)
 		return
 	}
+	rewritten := rewriteSoftDelete(db, table)
 	if !guardConditions(db, table) {
 		return
 	}
-	db.Statement.AddClause(clause.Delete{Table: db.tableName(table)})
+	if !rewritten {
+		db.Statement.AddClause(clause.Delete{Table: db.tableName(table)})
+	}
 	db.Statement.BuildClauses()
 	if db.Config.DryRun {
 		return

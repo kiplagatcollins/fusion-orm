@@ -74,6 +74,14 @@ func (db *DB) Preload(query string, args ...any) *DB {
 	return tx
 }
 
+// Unscoped disables soft-delete filtering and DELETE rewriting for the
+// statement, including relation preloads issued from it.
+func (db *DB) Unscoped() *DB {
+	tx := db.getInstance()
+	tx.Statement.Set("fusion:unscoped", true)
+	return tx
+}
+
 // Joins adds a raw JOIN expression, or LEFT JOINs a named has-one/belongs-to
 // relation and selects its columns as alias__column for dotted scanning.
 func (db *DB) Joins(query string, args ...any) *DB {

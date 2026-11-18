@@ -41,19 +41,22 @@ type Field struct {
 	Serializer   Serializer
 	Tag          Tag
 
-	PrimaryKey     bool
-	AutoIncrement  bool
-	NotNull        bool
-	NullZero       bool
-	AutoCreateTime bool
-	AutoUpdateTime bool
-	Creatable      bool
-	Updatable      bool
-	Readable       bool
-	IndexName      string
-	UniqueName     string
-	OnUpdate       string
-	OnDelete       string
+	PrimaryKey      bool
+	AutoIncrement   bool
+	NotNull         bool
+	NullZero        bool
+	AutoCreateTime  bool
+	AutoUpdateTime  bool
+	SoftDelete      bool
+	SoftDeleteZero  string
+	SoftDeleteValue string
+	Creatable       bool
+	Updatable       bool
+	Readable        bool
+	IndexName       string
+	UniqueName      string
+	OnUpdate        string
+	OnDelete        string
 
 	Appender AppenderFunc
 	Scanner  ScannerFunc
@@ -182,26 +185,37 @@ func newField(typ reflect.Type, sf reflect.StructField, tag Tag, dbName string, 
 	if tag.Has("json") || tag.Get("serializer") == "json" {
 		ser = JSONSerializer{}
 	}
+	softDelete := sf.Name == "DeletedAt" || tag.Has("softdelete")
+	sqlType := tag.Get("type")
+	if softDelete && sqlType == "" {
+		sqlType = "TIMESTAMP"
+	}
 	field := &Field{
-		StructField:    sf,
-		Name:           sf.Name,
-		DBName:         dbName,
-		IndirectType:   indirect,
-		IsPtr:          isPtr,
-		DataType:       dataTypeOf(indirect),
-		SQLType:        tag.Get("type"),
-		DefaultValue:   tag.Get("default"),
-		Serializer:     ser,
-		Tag:            tag,
-		PrimaryKey:     tag.Has("pk") || tag.Has("primarykey") || sf.Name == "ID",
-		AutoIncrement:  tag.Has("autoincrement"),
-		NotNull:        tag.Has("notnull"),
-		NullZero:       tag.Has("nullzero"),
-		AutoCreateTime: sf.Name == "CreatedAt",
-		AutoUpdateTime: sf.Name == "UpdatedAt",
-		Creatable:      !tag.Has("->"),
-		Updatable:      !tag.Has("->") && !tag.Has("<-"),
-		Readable:       !tag.Has("<-"),
+		StructField:     sf,
+		Name:            sf.Name,
+		DBName:          dbName,
+		IndirectType:    indirect,
+		IsPtr:           isPtr,
+		DataType:        dataTypeOf(indirect),
+		SQLType:         sqlType,
+		DefaultValue:    tag.Get("default"),
+		Serializer:      ser,
+		Tag:             tag,
+		PrimaryKey:      tag.Has("pk") || tag.Has("primarykey") || sf.Name == "ID",
+		AutoIncrement:   tag.Has("autoincrement"),
+		NotNull:         tag.Has("notnull"),
+		NullZero:        tag.Has("nullzero"),
+		AutoCreateTime:  sf.Name == "CreatedAt",
+		AutoUpdateTime:  sf.Name == "UpdatedAt",
+		SoftDelete:      softDelete,
+		SoftDeleteZero:  tag.Get("zerovalue"),
+		SoftDeleteValue: tag.Get("deletevalue"),
+		Creatable:       !tag.Has("->"),
+		Updatable:       !tag.Has("->") && !tag.Has("<-"),
+		Readable:        !tag.Has("<-"),
+	}
+	if softDelete {
+		field.DataType = DataTypeTime
 	}
 	field.Appender = Appender(sf.Type, ser)
 	field.Scanner = Scanner(sf.Type, ser)

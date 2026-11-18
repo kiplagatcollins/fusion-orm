@@ -47,6 +47,7 @@ var knownKeys = map[string]bool{
 	"many2many": true, "polymorphic": true, "polymorphicvalue": true,
 	"serializer": true, "json": true, "constraint": true,
 	"ondelete": true, "onupdate": true,
+	"softdelete": true, "zerovalue": true, "deletevalue": true,
 }
 
 // gormTagAliases documents the 1:1 migration from gorm:"..." keys.

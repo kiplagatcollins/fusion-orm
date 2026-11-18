@@ -4,10 +4,13 @@ package postgres
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
 	"github.com/kiplagatcollins/fusion-orm/dialect/feature"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers the "pgx" driver
 )
 
@@ -68,4 +71,25 @@ func (d *Dialector) Initialize() (*sql.DB, error) {
 // BindVarTo renders the "$n" placeholder.
 func (d *Dialector) BindVarTo(b []byte, index int) []byte {
 	return d.BindVarToDollar(b, index)
+}
+
+// Translate maps PostgreSQL SQLSTATE codes onto the shared sentinels.
+func (d *Dialector) Translate(err error) error {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return err
+	}
+	var sentinel error
+	switch pgErr.Code {
+	case "23505":
+		sentinel = dialect.ErrDuplicatedKey
+	case "23503":
+		sentinel = dialect.ErrForeignKeyViolated
+	case "23514":
+		sentinel = dialect.ErrCheckConstraintViolated
+	}
+	if sentinel == nil {
+		return err
+	}
+	return fmt.Errorf("%w: %w", sentinel, err)
 }

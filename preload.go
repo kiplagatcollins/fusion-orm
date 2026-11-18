@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/clause"
 	"github.com/kiplagatcollins/fusion-orm/schema"
@@ -185,6 +184,9 @@ func (db *DB) loadTargets(join *schema.Table, keys []any, match *schema.Field, m
 	child := db.Session(&Session{NewDB: true}).getInstance()
 	child.Statement.Model = reflect.New(join.Type).Interface()
 	child.Statement.Preloads = entry.Children
+	if isUnscoped(db) {
+		child.Statement.Set("fusion:unscoped", true)
+	}
 	applyPreloadArgs(child, entry.Args)
 
 	column := child.Statement.QuoteTo(matchColumn)
@@ -259,6 +261,9 @@ func (db *DB) loadM2M(sources []reflect.Value, rel *schema.Relation, entry *prel
 	child := db.Session(&Session{NewDB: true}).getInstance()
 	child.Statement.Model = reflect.New(join.Type).Interface()
 	child.Statement.Preloads = entry.Children
+	if isUnscoped(db) {
+		child.Statement.Set("fusion:unscoped", true)
+	}
 	applyPreloadArgs(child, entry.Args)
 	matchColumn := rel.ForeignKey.DBName
 	refColumn := child.Statement.QuoteTo(matchColumn)
@@ -301,10 +306,7 @@ func (db *DB) queryJoinPairs(spec joinSpec, keys []any) (map[any][]any, error) {
 		Exprs: []clause.Expression{clause.Expr(column+" IN ("+inPlaceholders(len(keys))+")", keys...)},
 	}}})
 	q.Statement.BuildClauses()
-	ctx := statementContext(q.Statement)
-	begin := time.Now()
-	rows, err := q.Statement.ConnPool.QueryContext(ctx, string(q.Statement.SQL), q.Statement.Vars...)
-	trace(q, ctx, begin, string(q.Statement.SQL), q.Statement.Vars, err)
+	rows, err := q.queryContext(statementContext(q.Statement), string(q.Statement.SQL), q.Statement.Vars...)
 	if err != nil {
 		return nil, fmt.Errorf("load %s: %w", spec.table, err)
 	}

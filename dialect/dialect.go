@@ -5,12 +5,21 @@ package dialect
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/dialect/feature"
+)
+
+// Constraint sentinels are shared by dialect error translators and aliased by
+// the root package so callers only need one import.
+var (
+	ErrDuplicatedKey           = errors.New("duplicated key not allowed")
+	ErrForeignKeyViolated      = errors.New("violates foreign key constraint")
+	ErrCheckConstraintViolated = errors.New("violates check constraint")
 )
 
 // Name identifies a SQL dialect.

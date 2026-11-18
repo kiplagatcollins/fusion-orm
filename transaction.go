@@ -157,7 +157,7 @@ func (db *DB) savepoint(appendSQL func([]byte, dialect.Dialector, string) []byte
 	}
 
 	query := string(appendSQL(nil, tx.Dialector, name))
-	_, err := tx.Statement.ConnPool.ExecContext(statementContext(tx.Statement), query)
+	_, err := tx.execContext(statementContext(tx.Statement), query)
 	tx.AddError(err)
 	return tx
 }

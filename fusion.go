@@ -10,6 +10,7 @@ import (
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
 	"github.com/kiplagatcollins/fusion-orm/logger"
+	"github.com/kiplagatcollins/fusion-orm/migrator"
 	"github.com/kiplagatcollins/fusion-orm/schema"
 )
 
@@ -73,6 +74,14 @@ type Config struct {
 	NamingStrategy schema.Namer
 	// StrictTags rejects unknown fusion tag keys instead of warning.
 	StrictTags bool
+	// PrepareStmt enables the LRU+TTL prepared-statement cache.
+	PrepareStmt bool
+	// PreparedStmtCacheSize bounds cached statements (default 1000).
+	PreparedStmtCacheSize int
+	// PreparedStmtTTL expires cached statements (0 = no expiry).
+	PreparedStmtTTL time.Duration
+	// QueryHooks observes statements around execution.
+	QueryHooks []QueryHook
 
 	// ConnPool, when set before Open, is used instead of opening a pool
 	// through the dialector.
@@ -190,6 +199,9 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 			return nil, fmt.Errorf("fusion: open %s: %w", d.Name(), err)
 		}
 		config.ConnPool = pool
+	}
+	if config.PrepareStmt {
+		config.ConnPool = newPreparedPool(config.ConnPool, config.PreparedStmtCacheSize, config.PreparedStmtTTL)
 	}
 
 	db := &DB{
@@ -337,15 +349,33 @@ func (db *DB) Parse(model any) (*schema.Table, error) {
 // DB returns the underlying *sql.DB. On a transaction instance it returns
 // the root pool the transaction was begun from.
 func (db *DB) DB() (*sql.DB, error) {
+	unwrap := func(pool ConnPool) ConnPool {
+		for {
+			wrapper, ok := pool.(interface{ Underlying() ConnPool })
+			if !ok {
+				return pool
+			}
+			pool = wrapper.Underlying()
+		}
+	}
 	if db.Statement != nil {
-		if pool, ok := db.Statement.ConnPool.(*sql.DB); ok {
+		if pool, ok := unwrap(db.Statement.ConnPool).(*sql.DB); ok {
 			return pool, nil
 		}
 	}
-	if pool, ok := db.Config.ConnPool.(*sql.DB); ok {
+	if pool, ok := unwrap(db.Config.ConnPool).(*sql.DB); ok {
 		return pool, nil
 	}
 	return nil, ErrInvalidDB
+}
+
+// Migrator returns a migration runner over the session's pool.
+func (db *DB) Migrator(opts ...migrator.Option) (*migrator.Migrator, error) {
+	pool, err := db.DB()
+	if err != nil {
+		return nil, err
+	}
+	return migrator.New(pool, db.Dialector, db.tables, opts...), nil
 }
 
 // getInstance materializes the copy-on-write chain. clone == 1 (root or

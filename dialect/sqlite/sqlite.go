@@ -5,11 +5,14 @@ package sqlite
 import (
 	"database/sql"
 	"encoding/hex"
+	"errors"
+	"fmt"
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
 	"github.com/kiplagatcollins/fusion-orm/dialect/feature"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver
+	sqliteDriver "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // driverName is the database/sql driver registered by modernc.org/sqlite.
@@ -75,4 +78,25 @@ func (d *Dialector) AppendBytes(b []byte, bs []byte) []byte {
 	hex.Encode(b[s:], bs)
 	b = append(b, '\'')
 	return b
+}
+
+// Translate maps modernc constraint codes onto the shared sentinels.
+func (d *Dialector) Translate(err error) error {
+	var sqliteErr *sqliteDriver.Error
+	if !errors.As(err, &sqliteErr) {
+		return err
+	}
+	var sentinel error
+	switch sqliteErr.Code() {
+	case sqlite3.SQLITE_CONSTRAINT_UNIQUE, sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY:
+		sentinel = dialect.ErrDuplicatedKey
+	case sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:
+		sentinel = dialect.ErrForeignKeyViolated
+	case sqlite3.SQLITE_CONSTRAINT_CHECK:
+		sentinel = dialect.ErrCheckConstraintViolated
+	}
+	if sentinel == nil {
+		return err
+	}
+	return fmt.Errorf("%w: %w", sentinel, err)
 }

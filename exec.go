@@ -25,19 +25,13 @@ func (db *DB) Exec(sql string, args ...any) *DB {
 	}
 
 	ctx := statementContext(tx.Statement)
-	begin := time.Now()
-
-	result, err := tx.Statement.ConnPool.ExecContext(ctx, sql, args...)
+	result, err := tx.execContext(ctx, sql, args...)
 	if err != nil {
 		tx.AddError(err)
 	} else if result != nil {
 		if n, raErr := result.RowsAffected(); raErr == nil {
 			tx.RowsAffected = n
 		}
-	}
-
-	if tx.Logger != nil {
-		trace(tx, ctx, begin, sql, args, err)
 	}
 	return tx
 }

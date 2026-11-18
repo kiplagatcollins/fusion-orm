@@ -2,6 +2,8 @@ package fusion
 
 import (
 	"errors"
+
+	"github.com/kiplagatcollins/fusion-orm/logger"
 	"testing"
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
@@ -104,5 +106,19 @@ func TestSentinelsAreDistinct(t *testing.T) {
 				t.Errorf("%v must not match %v", a, b)
 			}
 		}
+	}
+}
+
+func TestTranslateErrorSQLiteUnique(t *testing.T) {
+	db := openTestDB(t, &Config{Logger: logger.Discard, TranslateError: true})
+	if err := db.Exec(`CREATE TABLE uniq_users (id INTEGER PRIMARY KEY, email TEXT UNIQUE)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Exec(`INSERT INTO uniq_users (email) VALUES ('a')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	err := db.Exec(`INSERT INTO uniq_users (email) VALUES ('a')`).Error
+	if !errors.Is(err, ErrDuplicatedKey) {
+		t.Errorf("error = %v, want ErrDuplicatedKey", err)
 	}
 }

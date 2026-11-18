@@ -26,17 +26,10 @@ var (
 	// WHERE conditions errors unless Config.AllowGlobalUpdate is set.
 	ErrMissingWhereClause = errors.New("WHERE conditions required")
 
-	// ErrDuplicatedKey is returned (after error translation) on unique
-	// constraint violations.
-	ErrDuplicatedKey = errors.New("duplicated key not allowed")
-
-	// ErrForeignKeyViolated is returned (after error translation) on foreign
-	// key constraint violations.
-	ErrForeignKeyViolated = errors.New("violates foreign key constraint")
-
-	// ErrCheckConstraintViolated is returned (after error translation) on
-	// check constraint violations.
-	ErrCheckConstraintViolated = errors.New("violates check constraint")
+	// Constraint sentinels are produced by dialect error translators.
+	ErrDuplicatedKey           = dialect.ErrDuplicatedKey
+	ErrForeignKeyViolated      = dialect.ErrForeignKeyViolated
+	ErrCheckConstraintViolated = dialect.ErrCheckConstraintViolated
 
 	// ErrInvalidValue reports a destination or argument of the wrong type
 	// (e.g. Find on a non-pointer). It is a programmer error.
