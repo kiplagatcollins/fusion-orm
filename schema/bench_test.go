@@ -15,8 +15,7 @@ func BenchmarkParseCached(b *testing.B) {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := tables.Parse(&closureModel{}); err != nil {
 			b.Fatal(err)
 		}
@@ -32,8 +31,7 @@ func BenchmarkFieldAppend(b *testing.B) {
 	src := reflect.ValueOf(closureModel{S: "bench"})
 	d := sqlite.Open("")
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		benchSink = field.Append(benchSink[:0], src, d)
 	}
 }
@@ -46,8 +44,7 @@ func BenchmarkFieldScan(b *testing.B) {
 	field := table.Field("I")
 	dst := reflect.ValueOf(new(closureModel)).Elem()
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := field.Scan(dst, int64(42)); err != nil {
 			b.Fatal(err)
 		}

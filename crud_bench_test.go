@@ -33,8 +33,7 @@ func BenchmarkBatchInsert10k(b *testing.B) {
 		users[i].Age = i % 100
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if err := db.CreateBatchSize(1000).Create(&users).Error; err != nil {
 			b.Fatal(err)
 		}
