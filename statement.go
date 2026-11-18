@@ -52,6 +52,13 @@ type Statement struct {
 	Joins []joinEntry
 }
 
+func statementContext(stmt *Statement) context.Context {
+	if stmt != nil && stmt.Context != nil {
+		return stmt.Context
+	}
+	return context.TODO()
+}
+
 // AddClause registers or replaces c, preserving its first-seen build order.
 func (stmt *Statement) AddClause(c clause.Interface) {
 	if stmt.Clauses == nil {

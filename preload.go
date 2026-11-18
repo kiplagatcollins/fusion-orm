@@ -301,7 +301,7 @@ func (db *DB) queryJoinPairs(spec joinSpec, keys []any) (map[any][]any, error) {
 		Exprs: []clause.Expression{clause.Expr(column+" IN ("+inPlaceholders(len(keys))+")", keys...)},
 	}}})
 	q.Statement.BuildClauses()
-	ctx := q.Statement.Context
+	ctx := statementContext(q.Statement)
 	begin := time.Now()
 	rows, err := q.Statement.ConnPool.QueryContext(ctx, string(q.Statement.SQL), q.Statement.Vars...)
 	trace(q, ctx, begin, string(q.Statement.SQL), q.Statement.Vars, err)

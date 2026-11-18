@@ -250,7 +250,7 @@ func (db *DB) Row() *sql.Row {
 	if tx.Error != nil {
 		return nil
 	}
-	return tx.Statement.ConnPool.QueryRowContext(tx.Statement.Context, string(tx.Statement.SQL), tx.Statement.Vars...)
+	return tx.Statement.ConnPool.QueryRowContext(statementContext(tx.Statement), string(tx.Statement.SQL), tx.Statement.Vars...)
 }
 
 // Rows builds the query through the row processor and returns the result

@@ -144,7 +144,7 @@ func queryRows(db *DB) {
 		db.AddError(err)
 		return
 	}
-	ctx := db.Statement.Context
+	ctx := statementContext(db.Statement)
 	begin := time.Now()
 	rows, err := db.Statement.ConnPool.QueryContext(ctx, string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
@@ -170,7 +170,7 @@ func queryRowsForRow(db *DB) {
 	if db.Config.DryRun {
 		return
 	}
-	rows, err := db.Statement.ConnPool.QueryContext(db.Statement.Context, string(db.Statement.SQL), db.Statement.Vars...)
+	rows, err := db.Statement.ConnPool.QueryContext(statementContext(db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("query rows: %w", err))
 		return
@@ -186,7 +186,7 @@ func execRaw(db *DB) {
 }
 
 func (db *DB) execSQL(sql string, vars []any) {
-	ctx := db.Statement.Context
+	ctx := statementContext(db.Statement)
 	begin := time.Now()
 	result, err := db.Statement.ConnPool.ExecContext(ctx, sql, vars...)
 	if err != nil {
@@ -304,7 +304,7 @@ func backfillFromReturning(db *DB, values []reflect.Value, table *schema.Table) 
 	if pk == nil {
 		return
 	}
-	ctx := db.Statement.Context
+	ctx := statementContext(db.Statement)
 	begin := time.Now()
 	rows, err := db.Statement.ConnPool.QueryContext(ctx, string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {

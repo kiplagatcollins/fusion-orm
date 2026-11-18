@@ -194,9 +194,9 @@ func TestSessionContextIsolatesStatement(t *testing.T) {
 		t.Errorf("context value = %v", got)
 	}
 
-	// nil context falls back to Background rather than panicking later.
-	if got := db.WithContext(nil).Statement.Context; got == nil {
-		t.Error("WithContext(nil) left a nil context")
+	// nil context falls back to TODO rather than panicking later.
+	if got := db.WithContext(context.TODO()).Statement.Context; got != context.TODO() {
+		t.Errorf("WithContext(nil) = %v, want context.TODO()", got)
 	}
 }
 
@@ -368,5 +368,17 @@ func TestSessionSchemaCacheAndStrictTags(t *testing.T) {
 	}
 	if _, err := db.Parse(&bad{}); !errors.Is(err, schema.ErrInvalidTag) {
 		t.Errorf("strict tag error = %v", err)
+	}
+}
+
+func TestNilStatementContextUsesTODO(t *testing.T) {
+	db := openTestDB(t)
+	db.Statement.Context = nil
+	ctx := statementContext(db.Statement)
+	if ctx == nil {
+		t.Fatal("statementContext returned nil")
+	}
+	if err := db.Exec(`SELECT 1`).Error; err != nil {
+		t.Fatalf("Exec with nil statement context: %v", err)
 	}
 }

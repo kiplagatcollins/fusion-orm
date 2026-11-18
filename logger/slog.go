@@ -86,7 +86,7 @@ func (l *slogLogger) ParamsFilter(_ context.Context, sql string, params ...any) 
 
 func (l *slogLogger) log(ctx context.Context, level slog.Level, msg string, data ...any) {
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.TODO()
 	}
 	attrs := make([]slog.Attr, 0, len(data)/2)
 	for i := 0; i+1 < len(data); i += 2 {

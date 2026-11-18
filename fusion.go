@@ -173,7 +173,7 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 		config.Logger = logger.Default
 	}
 	config.tables = schema.NewTables(config.NamingStrategy, config.StrictTags, func(key string) {
-		config.Logger.Warn(context.Background(), "unknown fusion tag key %q", key)
+		config.Logger.Warn(context.TODO(), "unknown fusion tag key %q", key)
 	})
 	config.callbacks = newCallbackManager()
 	config.joinTables = &joinTableRegistry{}
@@ -198,7 +198,7 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 		Statement: &Statement{
 			DB:       nil, // set below; Config is shared, DB pointer is not
 			ConnPool: config.ConnPool,
-			Context:  context.Background(),
+			Context:  context.TODO(),
 			Settings: &sync.Map{},
 		},
 	}
@@ -206,7 +206,7 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 
 	if config.TranslateError {
 		if _, ok := d.(ErrorTranslator); !ok {
-			config.Logger.Warn(context.Background(),
+			config.Logger.Warn(context.TODO(),
 				"TranslateError is enabled, but dialector %s does not implement ErrorTranslator", d.Name())
 		}
 	}
@@ -284,7 +284,7 @@ func (db *DB) Session(config *Session) *DB {
 // WithContext returns a derivative that runs every statement under ctx.
 func (db *DB) WithContext(ctx context.Context) *DB {
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.TODO()
 	}
 	return db.Session(&Session{Context: ctx})
 }

@@ -1,7 +1,6 @@
 package fusion
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"reflect"
@@ -75,10 +74,7 @@ func (db *DB) Transaction(fc func(tx *DB) error, opts ...*sql.TxOptions) (err er
 func (db *DB) Begin(opts ...*sql.TxOptions) *DB {
 	tx := db.getInstance()
 
-	ctx := tx.Statement.Context
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := statementContext(tx.Statement)
 	var opt *sql.TxOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -161,7 +157,7 @@ func (db *DB) savepoint(appendSQL func([]byte, dialect.Dialector, string) []byte
 	}
 
 	query := string(appendSQL(nil, tx.Dialector, name))
-	_, err := tx.Statement.ConnPool.ExecContext(tx.Statement.Context, query)
+	_, err := tx.Statement.ConnPool.ExecContext(statementContext(tx.Statement), query)
 	tx.AddError(err)
 	return tx
 }

@@ -24,7 +24,7 @@ func (db *DB) Exec(sql string, args ...any) *DB {
 		return tx
 	}
 
-	ctx := tx.Statement.Context
+	ctx := statementContext(tx.Statement)
 	begin := time.Now()
 
 	result, err := tx.Statement.ConnPool.ExecContext(ctx, sql, args...)
@@ -43,6 +43,9 @@ func (db *DB) Exec(sql string, args ...any) *DB {
 }
 
 func trace(db *DB, ctx context.Context, begin time.Time, sql string, vars []any, err error) {
+	if ctx == nil {
+		ctx = context.TODO()
+	}
 	if db.Logger == nil {
 		return
 	}
