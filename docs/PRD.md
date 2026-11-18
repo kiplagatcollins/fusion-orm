@@ -86,13 +86,12 @@ Teams pick one and compromise: gorm users accept the performance tax; bun users 
 
 ## 9. Current Status
 
-- **Built:** design set (DESIGN.md, GAP_ANALYSIS.md, this doc suite); **M1 core plumbing** (sentinel errors + AddError wrap-chain, `logger/` with slog adapter, `dialect/` with 35 feature flags + golden quoting + SQLite/PG dialects, session/clone layer, panic-safe transactions with savepoints); **M2 schema layer** (cached per-type `*Table` with concurrent dedupe + two-phase relation init, `fusion:"..."` tag parser with lenient/strict modes + gorm migration aliases, `Namer`/`Tabler` with pluralized snake_case via `jinzhu/inflection`, field metadata with precompiled zero-alloc Appender/Scanner/IsZero closures, embedded structs with prefix + ambiguity detection, four relation kinds with FK/ polymorphic/m2m metadata + constraint tags, hook-presence booleans + explicit root hook interfaces).
-- **In progress:** Milestone M3 — query engine (`clause/` builders, callback pipeline, finishers, row scanning).
-- **Known limitations:** no query engine yet (M3): `Exec` is the only raw statement; `ToSQL` renders raw SQL only. `PrepareStmt` and `CreateBatchSize` config fields arrive in M5/M3.
+- **Built:** design set (DESIGN.md, GAP_ANALYSIS.md, this doc suite); **M1 core plumbing** (sentinel errors + AddError wrap-chain, `logger/` with slog adapter, `dialect/` with 35 feature flags + golden quoting + SQLite/PG dialects, session/clone layer, panic-safe transactions with savepoints); **M2 schema layer** (cached per-type `*Table` with concurrent dedupe + two-phase relation init, `fusion:"..."` tag parser with lenient/strict modes + gorm migration aliases, `Namer`/`Tabler` with pluralized snake_case via `jinzhu/inflection`, field metadata with precompiled zero-alloc Appender/Scanner/IsZero closures, embedded structs with prefix + ambiguity detection, four relation kinds with FK/ polymorphic/m2m metadata + constraint tags, hook-presence booleans + explicit root hook interfaces); **M3 query engine** (`clause/` builders with per-dialect golden SQL, clause registry + stable build order in `Statement`, compiled row scanning for struct/slice/map/scalar incl. `alias__column`, gorm-parity chainable/finisher API, `callbacks/` chain order + root processor registration API, create/query/update/delete/raw/row chains with auto timestamps, batch INSERT with `RETURNING`/`LastInsertID` backfill, no-WHERE guard, `ErrRecordNotFound`, `FindInBatches`, `FirstOrInit/FirstOrCreate`, `ToSQL`).
+- **In progress:** Milestone M4 — relations (batched preload, association API, polymorphic/m2m).
+- **Known limitations:** relations are parsed but not yet loaded or written (M4); `PrepareStmt`, soft delete, generics facade and error translation land in M5. `CreateBatchSize` is a chainable statement setting (no config field).
 
 ## 10. Open Questions
 
 - ~~Module path~~ — **resolved:** `github.com/kiplagatcollins/fusion-orm` (package `fusion`), set at M1 scaffolding.
+- ~~Scopes vs Apply~~ — **resolved:** keep gorm's `Scopes` name (implemented in M3) for migration parity.
 - Should `PrepareStmt` be on by default for SQLite, where it shows the largest win? (decide in M5)
-- Tag parser: strict (unknown keys error) or lenient (warn via logger)? (design says lenient default + `StrictTags`; decide in M2)
-- Do we expose gorm's `Scopes` under the same name or a clearer one (`Apply`)? (decide before Phase 3)

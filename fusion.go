@@ -83,6 +83,8 @@ type Config struct {
 	Plugins map[string]Plugin
 	// tables is the per-session schema parse cache (shared by derivatives).
 	tables *schema.Tables
+	// callbacks holds the CRUD processors (shared by derivatives).
+	callbacks *CallbackManager
 }
 
 // Option configures Open. *Config implements Option, so a full config can be
@@ -162,6 +164,7 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 	config.tables = schema.NewTables(config.NamingStrategy, config.StrictTags, func(key string) {
 		config.Logger.Warn(context.Background(), "unknown fusion tag key %q", key)
 	})
+	config.callbacks = newCallbackManager()
 	if config.NowFunc == nil {
 		config.NowFunc = func() time.Time { return time.Now().Local() }
 	}

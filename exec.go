@@ -1,6 +1,7 @@
 package fusion
 
 import (
+	"context"
 	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/dialect"
@@ -36,17 +37,23 @@ func (db *DB) Exec(sql string, args ...any) *DB {
 	}
 
 	if tx.Logger != nil {
-		tx.Logger.Trace(ctx, begin, func() (string, int64) {
-			s, p := sql, args
-			if filter, ok := tx.Logger.(logger.ParamsFilter); ok {
-				s, p = filter.ParamsFilter(ctx, sql, args...)
-			}
-			if p == nil {
-				// ParameterizedQueries mode (or no args): log as-is.
-				return s, tx.RowsAffected
-			}
-			return dialect.Explain(tx.Dialector, s, p...), tx.RowsAffected
-		}, err)
+		trace(tx, ctx, begin, sql, args, err)
 	}
 	return tx
+}
+
+func trace(db *DB, ctx context.Context, begin time.Time, sql string, vars []any, err error) {
+	if db.Logger == nil {
+		return
+	}
+	db.Logger.Trace(ctx, begin, func() (string, int64) {
+		s, p := sql, vars
+		if filter, ok := db.Logger.(logger.ParamsFilter); ok {
+			s, p = filter.ParamsFilter(ctx, sql, vars...)
+		}
+		if p == nil {
+			return s, db.RowsAffected
+		}
+		return dialect.Explain(db.Dialector, s, p...), db.RowsAffected
+	}, err)
 }
