@@ -283,12 +283,21 @@ func (db *DB) Pluck(column string, dest any) *DB {
 }
 
 // Row builds the query and returns the first row for manual scanning.
+// rowBuildErrorSQL fails against every dialect with a deterministic error
+// (no such table), giving Row().Scan something to report when the query
+// could not be built.
+const rowBuildErrorSQL = `SELECT 1 FROM "__fusion_row_build_error"`
+
 func (db *DB) Row() *sql.Row {
 	tx := db.getInstance()
 	applyScopes(tx)
 	buildQuery(tx)
 	if tx.Error != nil {
-		return nil
+		// A *sql.Row cannot carry a custom error, so return a row whose
+		// Scan fails with a deterministic sentinel instead of nil — a nil
+		// *sql.Row panics in the caller's Scan (GORM #7575 class). The
+		// build error itself remains on db.Error.
+		return tx.Statement.ConnPool.QueryRowContext(statementContext(tx.Statement), rowBuildErrorSQL)
 	}
 	return tx.queryRowContext(statementContext(tx.Statement), string(tx.Statement.SQL), tx.Statement.Vars...)
 }

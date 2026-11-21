@@ -14,20 +14,6 @@ import (
 	"github.com/kiplagatcollins/fusion-orm/clause"
 )
 
-// ---------------------------------------------------------------- class C
-
-// TestAuditRowNeverNil: Row() must not return nil on build errors — a nil
-// *sql.Row panics in the caller's Scan. GORM #7575 class.
-func TestAuditRowNeverNil(t *testing.T) {
-	db := openTestDB(t)
-	row := db.Model(42).Row() // invalid model: build fails
-	if row == nil {
-		t.Fatal("Row() returned nil on build error; caller Scan panics (GORM #7575)")
-	}
-	var v any
-	_ = row.Scan(&v) // must not panic
-}
-
 // ---------------------------------------------------------------- class E
 
 // TestAuditScopeErrorsPropagate: errors raised while applying scopes must

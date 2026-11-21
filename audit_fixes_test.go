@@ -447,3 +447,22 @@ func TestAuditPreparedPoolForwardsPing(t *testing.T) {
 		t.Error("preparedPool does not implement Ping: automatic ping is silently skipped (GORM #6181)")
 	}
 }
+
+// ---------------------------------------------------------------- class C
+
+// TestAuditRowNeverNil: Row() must not return nil on build errors — a nil
+// *sql.Row panics in the caller's Scan. GORM #7575 class.
+func TestAuditRowNeverNil(t *testing.T) {
+	db := openTestDB(t)
+	row := db.Model(42).Row() // invalid model: build fails
+	if row == nil {
+		t.Fatal("Row() returned nil on build error; caller Scan panics (GORM #7575)")
+	}
+	if db.Error == nil {
+		t.Error("build error must stay on db.Error")
+	}
+	var v any
+	if err := row.Scan(&v); err == nil {
+		t.Error("Scan of the sentinel row must fail with the build error")
+	}
+}
