@@ -445,10 +445,13 @@ func deleteRows(db *DB) {
 		db.AddError(err)
 		return
 	}
-	rewritten := rewriteSoftDelete(db, table)
+	// The guard must run before the soft-delete rewrite: rewriting injects
+	// "deleted_at IS NULL", which would otherwise satisfy the guard and turn
+	// a condition-less delete into a global soft delete (GORM #6338 class).
 	if !guardConditions(db, table) {
 		return
 	}
+	rewritten := rewriteSoftDelete(db, table)
 	if !rewritten {
 		db.Statement.AddClause(clause.Delete{Table: db.tableName(table)})
 	}

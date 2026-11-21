@@ -3,7 +3,10 @@
 // default suite.
 package fusion
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 // ---------------------------------------------------------------- class A
 
@@ -74,6 +77,24 @@ func TestAuditImplicitTxReleasedOnHookPanic(t *testing.T) {
 	}
 	if n != 0 {
 		t.Errorf("panicking insert must roll back, rows=%d (want 0)", n)
+	}
+}
+
+// ---------------------------------------------------------------- class H
+
+// TestAuditGlobalSoftDeleteRequiresWhere: Delete without any caller
+// conditions on a soft-deletable model must fail with ErrMissingWhereClause
+// instead of soft-deleting every live row (the injected soft-delete filter
+// must not satisfy the global-delete guard). GORM #6338 class.
+func TestAuditGlobalSoftDeleteRequiresWhere(t *testing.T) {
+	db := setupSoftDelete(t) // seeds two live rows
+	err := db.Delete(&softUser{}).Error
+	if !errors.Is(err, ErrMissingWhereClause) {
+		t.Errorf("Delete without WHERE = %v, want ErrMissingWhereClause", err)
+	}
+	var live int64
+	if countErr := db.Model(&softUser{}).Count(&live).Error; countErr == nil && live != 2 {
+		t.Errorf("rows after guarded delete = %d, want 2", live)
 	}
 }
 

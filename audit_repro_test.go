@@ -8,7 +8,6 @@
 package fusion
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -16,22 +15,6 @@ import (
 )
 
 // ---------------------------------------------------------------- class H
-
-// TestAuditGlobalSoftDeleteRequiresWhere: Delete without any caller
-// conditions on a soft-deletable model must fail with ErrMissingWhereClause
-// instead of soft-deleting every live row (the injected soft-delete filter
-// must not satisfy the global-delete guard). GORM #6338 class.
-func TestAuditGlobalSoftDeleteRequiresWhere(t *testing.T) {
-	db := setupSoftDelete(t) // seeds two live rows
-	err := db.Delete(&softUser{}).Error
-	if !errors.Is(err, ErrMissingWhereClause) {
-		t.Errorf("Delete without WHERE = %v, want ErrMissingWhereClause", err)
-	}
-	var live int64
-	if countErr := db.Model(&softUser{}).Count(&live).Error; countErr == nil && live != 2 {
-		t.Errorf("rows after guarded delete = %d, want 2", live)
-	}
-}
 
 // TestAuditSoftDeleteNotBypassedByOr: user OR-conditions joined before the
 // injected soft-delete filter must keep SQL precedence so deleted rows can
