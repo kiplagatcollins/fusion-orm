@@ -196,20 +196,26 @@ func (a *Association) createRecord(value any, table *schema.Table) error {
 	tx := a.db.Session(&Session{NewDB: true}).getInstance()
 	tx.Statement.SkipHooks = true
 	tx.Statement.Set("fusion:skip_associations", true)
-	useSave := false
-	if a.fullSave {
+	pk := primaryField(table)
+	var pkValue any
+	pkSet := false
+	if pk != nil {
 		if values, err := modelValues(value); err == nil && len(values) > 0 {
-			if pk := primaryField(table); pk != nil {
-				if fv := fieldAt(values[0], pk.Index); fv.IsValid() && !pk.IsZero(fv) {
-					useSave = true
-				}
+			if fv := fieldAt(values[0], pk.Index); fv.IsValid() && !pk.IsZero(fv) {
+				pkSet = true
+				pkValue = fv.Interface()
 			}
 		}
 	}
 	var res *DB
-	if useSave {
+	switch {
+	case pkSet && a.fullSave:
 		res = tx.Save(value)
-	} else {
+	case pkSet:
+		// The child already exists: update it by primary key instead of
+		// inserting a duplicate row (GORM #6119 class).
+		res = tx.Where(pk.DBName+" = ?", pkValue).Updates(value)
+	default:
 		res = tx.Create(value)
 	}
 	if res.Error != nil {

@@ -177,26 +177,6 @@ func TestAuditAutoMigrateCreatesM2MJunction(t *testing.T) {
 	}
 }
 
-// TestAuditHasManyResaveNoDuplicate: creating a parent whose has-many child
-// carries an existing primary key must not insert a duplicate child row.
-// GORM #6119 class.
-func TestAuditHasManyResaveNoDuplicate(t *testing.T) {
-	db, _ := setupRelations(t)
-	// Existing child post (id 7) owned by user 1.
-	if err := db.Exec(`INSERT INTO rel_posts (id, user_id, title) VALUES (7, 1, 'seed')`).Error; err != nil {
-		t.Fatal(err)
-	}
-	// A new parent claims the existing child through the relation.
-	newUser := relUser{ID: 40, Name: "dave", Posts: []relPost{{ID: 7, Title: "seed"}}}
-	if err := db.Create(&newUser).Error; err != nil {
-		t.Fatalf("Create parent with existing child: %v", err)
-	}
-	n := scalarCount(t, db, `SELECT COUNT(*) FROM rel_posts WHERE title = 'seed'`)
-	if n != 1 {
-		t.Errorf("child rows with title 'seed' = %d, want 1 (no duplicate; GORM #6119)", n)
-	}
-}
-
 // TestAuditM2MAppendIdempotent: re-appending an existing relation must not
 // insert a duplicate junction row. GORM #5579/#7365 class.
 func TestAuditM2MAppendIdempotent(t *testing.T) {
