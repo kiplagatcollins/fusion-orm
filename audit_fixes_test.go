@@ -238,3 +238,18 @@ func TestAuditRelationJoinOmitsSoftDeleted(t *testing.T) {
 		t.Errorf("join returned soft-deleted relation: %+v", *got[0].Profile)
 	}
 }
+
+// ---------------------------------------------------------------- class G
+
+// TestAuditCountStripsOrderBy: ORDER BY must not survive into COUNT(*) —
+// PostgreSQL rejects it (column must appear in GROUP BY). GORM #7516 class.
+func TestAuditCountStripsOrderBy(t *testing.T) {
+	db := openTestDB(t)
+	var n int64
+	tx := db.Session(&Session{DryRun: true}).
+		Model(&auditPlainUser{}).Order("name").Count(&n)
+	sql := string(tx.Statement.SQL)
+	if strings.Contains(sql, "ORDER BY") {
+		t.Errorf("Count kept ORDER BY (invalid on PG): %s", sql)
+	}
+}

@@ -229,6 +229,10 @@ func (db *DB) Count(count *int64) *DB {
 	tx := db.getInstance()
 	tx.Statement.Dest = count
 	tx.Statement.AddClause(clause.Select{Columns: []string{"COUNT(*)"}})
+	// ORDER BY is invalid next to COUNT(*) on PostgreSQL (the ordering
+	// column must appear in GROUP BY); drop whatever the caller or a scope
+	// provided. GROUP BY/HAVING are left intact. GORM #7516.
+	tx.Statement.RemoveClause("order")
 	tx.callbacks.query.Execute(tx)
 	return tx
 }
