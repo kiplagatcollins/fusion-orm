@@ -115,6 +115,37 @@ type userWithNumericModel struct {
 
 func (userWithNumericModel) TableName() string { return "base_users" }
 
+func TestAutoMigrateUUIDModelColumnTypes(t *testing.T) {
+	db := setupUUIDModelDB(t)
+	ctx := context.Background()
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(ctx, &userWithUUIDModel{}); err != nil {
+		t.Fatalf("AutoMigrate: %v", err)
+	}
+	cols, err := m.ColumnTypes(ctx, "base_uuid_users")
+	if err != nil {
+		t.Fatal(err)
+	}
+	types := make(map[string]string, len(cols))
+	for _, col := range cols {
+		types[col.Name] = col.Type
+	}
+	if types["id"] != "TEXT" {
+		t.Errorf("id column type = %q, want TEXT", types["id"])
+	}
+	var indexes int
+	if err := db.Statement.ConnPool.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'base_uuid_users'`).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+	if indexes == 0 {
+		t.Error("deleted_at index missing")
+	}
+}
+
 func TestUUIDModelRoundTrip(t *testing.T) {
 	db := setupUUIDModelDB(t)
 	ctx := context.Background()

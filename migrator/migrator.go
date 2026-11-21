@@ -98,7 +98,7 @@ func missingFeature(flag feature.Feature) error {
 
 func (m *Migrator) sqlType(field *schema.Field) string {
 	if field.SQLType != "" {
-		return field.SQLType
+		return m.mappedSQLType(field.SQLType)
 	}
 	pgTypes := m.has(feature.PostgreSQLTypes)
 	switch field.DataType {
@@ -132,6 +132,18 @@ func (m *Migrator) sqlType(field *schema.Field) string {
 	default:
 		return "TEXT"
 	}
+}
+
+// mappedSQLType translates known portable type aliases per dialect. Only
+// recognized aliases are remapped; everything else passes through verbatim.
+func (m *Migrator) mappedSQLType(sqlType string) string {
+	if strings.EqualFold(strings.TrimSpace(sqlType), "uuid") {
+		if m.has(feature.PostgreSQLTypes) {
+			return "uuid"
+		}
+		return "TEXT"
+	}
+	return sqlType
 }
 
 func (m *Migrator) columnDefinition(field *schema.Field) string {
