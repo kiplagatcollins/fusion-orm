@@ -61,7 +61,15 @@ func (w Where) Build(b Builder) {
 		return
 	}
 	b.WriteString("WHERE ")
-	for i, cond := range w.Conds {
+	buildConditions(b, w.Conds)
+}
+
+// buildConditions renders conds, prefixing each with its join. A condition
+// holding multiple expressions is parenthesized unless it is the only one,
+// so a list reads left-to-right: appending a predicate to `a OR b` yields
+// `(a OR b) AND x`, never `a OR b AND x`.
+func buildConditions(b Builder, conds []Condition) {
+	for i, cond := range conds {
 		if i > 0 {
 			join := cond.Join
 			if join == "" {
@@ -70,6 +78,12 @@ func (w Where) Build(b Builder) {
 			b.AppendByte(' ')
 			b.WriteString(join)
 			b.AppendByte(' ')
+		}
+		if len(cond.Conds) == 0 && len(cond.Exprs) > 1 && (i > 0 || len(conds) > 1) {
+			b.AppendByte('(')
+			cond.Build(b)
+			b.AppendByte(')')
+			continue
 		}
 		cond.Build(b)
 	}

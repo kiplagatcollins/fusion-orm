@@ -3,6 +3,7 @@ package fusion
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/kiplagatcollins/fusion-orm/clause"
@@ -156,8 +157,15 @@ func (db *DB) addCondition(query any, args []any, or bool) *DB {
 	case string:
 		exprs = []clause.Expression{clause.Expr(v, args...)}
 	case map[string]any:
-		for key, value := range v {
-			exprs = append(exprs, clause.Expr(fmt.Sprintf("%s = ?", quoteIdentifier(tx, key)), value))
+		// Sorted keys keep the SQL text stable across calls so prepared-stmt
+		// caches and ToSQL reproducibility are not defeated by map order.
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			exprs = append(exprs, clause.Expr(fmt.Sprintf("%s = ?", quoteIdentifier(tx, key)), v[key]))
 		}
 	default:
 		exprs = structConditions(tx, v)

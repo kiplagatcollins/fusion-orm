@@ -48,15 +48,32 @@ func (e Expression) Build(b Builder) {
 
 // Condition is one joined group of a WHERE clause.
 type Condition struct {
-	Join  string // "AND" (default) or "OR"
+	Join string // "AND" (default) or "OR"
+	// Conds renders a parenthesized nested group — used to keep OR groups
+	// intact when another predicate is appended after them. When set, Exprs
+	// is ignored.
+	Conds []Condition
 	Exprs []Expression
 }
 
-// Build appends the condition's expressions joined by AND.
+// Build appends the condition: a nested Conds group as "(...)", otherwise
+// Exprs joined by the condition's own Join (AND by default).
 func (c Condition) Build(b Builder) {
+	if len(c.Conds) > 0 {
+		b.AppendByte('(')
+		buildConditions(b, c.Conds)
+		b.AppendByte(')')
+		return
+	}
+	join := c.Join
+	if join == "" {
+		join = "AND"
+	}
 	for i, expr := range c.Exprs {
 		if i > 0 {
-			b.WriteString(" AND ")
+			b.WriteString(" ")
+			b.WriteString(join)
+			b.WriteString(" ")
 		}
 		expr.Build(b)
 	}

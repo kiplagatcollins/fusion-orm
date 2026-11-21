@@ -133,19 +133,49 @@ func injectSoftDeleteFilter(db *DB, table *schema.Table) {
 		return
 	}
 	condition := softDeleteCondition(db, field)
-	expr := condition.SQL
 	where, _ := db.Statement.Clause("where").(clause.Where)
-	for _, existing := range where.Conds {
-		for _, candidate := range existing.Exprs {
-			if candidate.SQL == expr {
-				return
-			}
+	if condHasSQL(where.Conds, condition.SQL) {
+		return
+	}
+	// A top-level OR in the caller's conditions would bind tighter than the
+	// appended AND ("a OR b AND deleted_at IS NULL"), letting deleted rows
+	// back in — regroup everything so it renders "(a OR b) AND deleted...".
+	needsGroup := false
+	for i, cond := range where.Conds {
+		if i == 0 {
+			continue
 		}
+		join := cond.Join
+		if join == "" {
+			join = "AND"
+		}
+		if join == "OR" {
+			needsGroup = true
+		}
+	}
+	if needsGroup {
+		where.Conds = []clause.Condition{{Conds: where.Conds}}
 	}
 	where.Conds = append(where.Conds, clause.Condition{
 		Exprs: []clause.Expression{condition},
 	})
 	db.Statement.AddClause(where)
+}
+
+// condHasSQL reports whether any condition (including nested groups)
+// already carries an expression with the given SQL text.
+func condHasSQL(conds []clause.Condition, sql string) bool {
+	for _, cond := range conds {
+		for _, expr := range cond.Exprs {
+			if expr.SQL == sql {
+				return true
+			}
+		}
+		if condHasSQL(cond.Conds, sql) {
+			return true
+		}
+	}
+	return false
 }
 
 // rewriteSoftDelete converts DELETE into an UPDATE of the soft-delete column.

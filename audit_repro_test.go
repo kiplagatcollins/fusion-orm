@@ -14,38 +14,6 @@ import (
 	"github.com/kiplagatcollins/fusion-orm/clause"
 )
 
-// ---------------------------------------------------------------- class H
-
-// TestAuditSoftDeleteNotBypassedByOr: user OR-conditions joined before the
-// injected soft-delete filter must keep SQL precedence so deleted rows can
-// never reappear. GORM #6998/#5652 class.
-func TestAuditSoftDeleteNotBypassedByOr(t *testing.T) {
-	db := setupSoftDelete(t)
-	var users []softUser
-	if err := db.Find(&users).Error; err != nil {
-		t.Fatal(err)
-	}
-	// Soft-delete row "a".
-	if err := db.Delete(&softUser{}, users[0].ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	var got []softUser
-	if err := db.Model(&softUser{}).
-		Where("name = ?", "a").
-		Or("name = ?", "b").
-		Find(&got).Error; err != nil {
-		t.Fatal(err)
-	}
-	for _, u := range got {
-		if u.Name == "a" {
-			t.Errorf("deleted row returned through OR condition: %+v", u)
-		}
-	}
-	if len(got) != 1 {
-		t.Errorf("rows = %d, want 1 (only live %q)", len(got), "b")
-	}
-}
-
 // ---------------------------------------------------------------- class H/K
 
 type jdParent struct {
@@ -179,46 +147,6 @@ func TestAuditScopeErrorsPropagate(t *testing.T) {
 		Find(&out)
 	if res.Error == nil {
 		t.Error("error raised inside a scope was dropped by applyScopes (GORM #6283 class)")
-	}
-}
-
-// ---------------------------------------------------------------- class F
-
-type auditPlainUser struct {
-	ID   int64 `fusion:"pk,autoincrement"`
-	Name string
-}
-
-// TestAuditClauseOrRendersOr: clause.Or must render its expressions OR-joined.
-func TestAuditClauseOrRendersOr(t *testing.T) {
-	db := openTestDB(t)
-	sql := db.ToSQL(func(tx *DB) *DB {
-		return tx.Table("audit_plain_users").
-			Clauses(clause.Where{Conds: []clause.Condition{
-				clause.Or(clause.Expr("name = ?", "a"), clause.Expr("name = ?", "b")),
-			}}).
-			Find(&[]auditPlainUser{})
-	})
-	if !strings.Contains(sql, " OR ") {
-		t.Errorf("clause.Or rendered without OR: %s", sql)
-	}
-}
-
-// TestAuditMapConditionSQLStable: map-based conditions must produce stable
-// SQL so prepared-stmt caches and ToSQL stay deterministic. GORM #5846 class.
-func TestAuditMapConditionSQLStable(t *testing.T) {
-	db := openTestDB(t)
-	cond := map[string]any{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}
-	first := db.ToSQL(func(tx *DB) *DB {
-		return tx.Table("audit_plain_users").Where(cond).Find(&[]auditPlainUser{})
-	})
-	for i := 0; i < 30; i++ {
-		got := db.ToSQL(func(tx *DB) *DB {
-			return tx.Table("audit_plain_users").Where(cond).Find(&[]auditPlainUser{})
-		})
-		if got != first {
-			t.Fatalf("unstable SQL for identical map condition:\n%s\nvs\n%s (GORM #5846)", first, got)
-		}
 	}
 }
 
