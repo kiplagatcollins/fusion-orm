@@ -65,7 +65,8 @@ func (d *Dialector) Features() feature.Feature {
 		feature.InformationSchema |
 		feature.DollarPlaceholder |
 		feature.SerialColumn |
-		feature.AlterColumnType
+		feature.AlterColumnType |
+		feature.AddColumnNonConstantDefault
 }
 
 // Initialize opens the underlying database/sql pool.

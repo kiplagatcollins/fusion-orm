@@ -46,6 +46,13 @@ Single dialect, gorm-like keys, parsed from `fusion:"..."`:
 | `pk` / `primarykey` | primary key | `pk` |
 | `autoincrement` | identity | `autoincrement` |
 | `notnull` / `nullzero` / `default:` | constraints | `notnull,default:now()` |
+
+`default:` accepts literal values (`default:18`, `default:'x'`) and SQL
+expressions (`default:CURRENT_TIMESTAMP`, `default:now()`). Expression
+defaults apply through `CREATE TABLE`; when `AutoMigrate` must add such a
+column to an existing table on a dialect that rejects it in `ALTER TABLE
+ADD COLUMN` (SQLite), it rebuilds the table with the full desired schema
+inside a transaction and copies the surviving rows across.
 | `index` / `unique` | (unique) index, `index:idx_name,composite` | `unique` |
 | `->` / `<-` / `-` | read-only / write-only / ignored | `->` |
 | `embed` | embedded struct prefix | `embed:addr_` |

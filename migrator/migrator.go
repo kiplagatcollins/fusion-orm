@@ -185,6 +185,16 @@ func (m *Migrator) CreateTable(ctx context.Context, model any) error {
 	if err != nil {
 		return err
 	}
+	stmt := m.createTableSQL(table, m.quote(table.Name))
+	if _, err := m.db.ExecContext(ctx, stmt); err != nil {
+		return fmt.Errorf("create table %s: %w", table.Name, err)
+	}
+	return m.createIndexes(ctx, table)
+}
+
+// createTableSQL renders the CREATE TABLE statement for table, quoting
+// quotedName so the same schema can be materialized under a temp name.
+func (m *Migrator) createTableSQL(table *schema.Table, quotedName string) string {
 	definitions := make([]string, 0, len(table.Fields)+1)
 	for _, field := range table.Fields {
 		definitions = append(definitions, m.columnDefinition(field))
@@ -196,11 +206,7 @@ func (m *Migrator) CreateTable(ctx context.Context, model any) error {
 		}
 		definitions = append(definitions, "PRIMARY KEY ("+strings.Join(keys, ", ")+")")
 	}
-	stmt := fmt.Sprintf("CREATE TABLE %s (%s)", m.quote(table.Name), strings.Join(definitions, ", "))
-	if _, err := m.db.ExecContext(ctx, stmt); err != nil {
-		return fmt.Errorf("create table %s: %w", table.Name, err)
-	}
-	return m.createIndexes(ctx, table)
+	return fmt.Sprintf("CREATE TABLE %s (%s)", quotedName, strings.Join(definitions, ", "))
 }
 
 func (m *Migrator) createIndexes(ctx context.Context, table *schema.Table) error {
@@ -281,6 +287,76 @@ func (m *Migrator) AddColumn(ctx context.Context, table string, field *schema.Fi
 	return nil
 }
 
+// isNonConstantDefault reports whether the declared default is an expression
+// (CURRENT_TIMESTAMP, now(), ...) rather than a literal value. SQLite only
+// accepts such defaults inside CREATE TABLE, not ALTER TABLE ADD COLUMN.
+func isNonConstantDefault(v string) bool {
+	switch strings.ToUpper(strings.TrimSpace(v)) {
+	case "CURRENT_TIMESTAMP", "CURRENT_DATE", "CURRENT_TIME":
+		return true
+	}
+	return strings.Contains(v, "(")
+}
+
+// needsRebuild reports whether adding field to an existing table requires a
+// full table rebuild because the dialect cannot add the column with a
+// non-constant default in place.
+func (m *Migrator) needsRebuild(field *schema.Field) bool {
+	return field.DefaultValue != "" && isNonConstantDefault(field.DefaultValue) &&
+		!m.has(feature.AddColumnNonConstantDefault)
+}
+
+// rebuildTable recreates table with the full desired schema and copies the
+// surviving rows over. Used when a dialect (SQLite) cannot ALTER ADD a column
+// carrying a non-constant DEFAULT: the new table declares the default, and
+// copied rows omit the new column so SQLite fills it in.
+func (m *Migrator) rebuildTable(ctx context.Context, table *schema.Table) error {
+	columns, err := m.ColumnTypes(ctx, table.Name)
+	if err != nil {
+		return fmt.Errorf("rebuild %s: %w", table.Name, err)
+	}
+	inModel := make(map[string]bool, len(table.Fields))
+	for _, field := range table.Fields {
+		inModel[strings.ToLower(field.DBName)] = true
+	}
+	var copyCols []string
+	for _, col := range columns {
+		if inModel[strings.ToLower(col.Name)] {
+			copyCols = append(copyCols, m.quote(col.Name))
+		}
+	}
+	tmp := m.quote(table.Name + "__fusion_new")
+	stmts := []string{
+		fmt.Sprintf("DROP TABLE IF EXISTS %s", tmp),
+		m.createTableSQL(table, tmp),
+	}
+	if len(copyCols) > 0 {
+		stmts = append(stmts, fmt.Sprintf("INSERT INTO %s (%s) SELECT %s FROM %s",
+			tmp, strings.Join(copyCols, ", "), strings.Join(copyCols, ", "), m.quote(table.Name)))
+	}
+	stmts = append(stmts,
+		fmt.Sprintf("DROP TABLE %s", m.quote(table.Name)),
+		fmt.Sprintf("ALTER TABLE %s RENAME TO %s", tmp, m.quote(table.Name)),
+	)
+	tx, err := m.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("rebuild %s: %w", table.Name, err)
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("rebuild %s: %w", table.Name, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("rebuild %s: %w", table.Name, err)
+	}
+	if err := m.createIndexes(ctx, table); err != nil {
+		return fmt.Errorf("rebuild %s: %w", table.Name, err)
+	}
+	return nil
+}
+
 // DropColumn removes one column.
 func (m *Migrator) DropColumn(ctx context.Context, table, column string) error {
 	stmt := fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", m.quote(table), m.quote(column))
@@ -326,12 +402,35 @@ func (m *Migrator) AutoMigrate(ctx context.Context, values ...any) error {
 		for _, col := range columns {
 			present[strings.ToLower(col.Name)] = col
 		}
+		var missing []*schema.Field
+		for _, field := range table.Fields {
+			if _, ok := present[strings.ToLower(field.DBName)]; !ok {
+				missing = append(missing, field)
+			}
+		}
+		if len(missing) > 0 {
+			rebuild := false
+			for _, field := range missing {
+				if m.needsRebuild(field) {
+					rebuild = true
+					break
+				}
+			}
+			if rebuild {
+				if err := m.rebuildTable(ctx, table); err != nil {
+					return err
+				}
+			} else {
+				for _, field := range missing {
+					if err := m.AddColumn(ctx, table.Name, field); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		for _, field := range table.Fields {
 			existing, ok := present[strings.ToLower(field.DBName)]
 			if !ok {
-				if err := m.AddColumn(ctx, table.Name, field); err != nil {
-					return err
-				}
 				continue
 			}
 			if existing.Type != "" && !typeCompatible(existing.Type, m.sqlType(field)) {

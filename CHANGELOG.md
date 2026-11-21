@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `AutoMigrate` now preserves non-constant column defaults (e.g.
+  `fusion:"default:CURRENT_TIMESTAMP"`) when adding columns to existing tables
+  on dialects that reject them in `ALTER TABLE ADD COLUMN` (SQLite), by
+  rebuilding the table with the full desired schema and copying rows across.
+
 ## [0.1.0] - 2026-11-18
 
 ### Added

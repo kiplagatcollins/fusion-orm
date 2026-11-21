@@ -21,7 +21,7 @@ func TestDialectCapabilitiesAreNamedFlags(t *testing.T) {
 			want: []feature.Feature{
 				feature.PostgreSQLTypes, feature.InformationSchema,
 				feature.DollarPlaceholder, feature.SerialColumn,
-				feature.AlterColumnType,
+				feature.AlterColumnType, feature.AddColumnNonConstantDefault,
 			},
 			missing: []feature.Feature{feature.PragmaTableInfo, feature.AutoIncrementClause},
 		},
@@ -34,6 +34,7 @@ func TestDialectCapabilitiesAreNamedFlags(t *testing.T) {
 			missing: []feature.Feature{
 				feature.InformationSchema, feature.DollarPlaceholder,
 				feature.SerialColumn, feature.AlterColumnType,
+				feature.AddColumnNonConstantDefault,
 			},
 		},
 	}

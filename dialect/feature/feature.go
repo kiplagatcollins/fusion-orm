@@ -126,6 +126,10 @@ const (
 	AutoIncrementClause
 	// AlterColumnType supports ALTER COLUMN ... TYPE statements.
 	AlterColumnType
+	// AddColumnNonConstantDefault permits ALTER TABLE ADD COLUMN with
+	// non-constant defaults such as CURRENT_TIMESTAMP or function calls.
+	// SQLite rejects such defaults outside CREATE TABLE.
+	AddColumnNonConstantDefault
 )
 
 // Has reports whether all bits of flag are present in f.
@@ -230,6 +234,7 @@ var ordered = []entry{
 	{SerialColumn, "SerialColumn"},
 	{AutoIncrementClause, "AutoIncrementClause"},
 	{AlterColumnType, "AlterColumnType"},
+	{AddColumnNonConstantDefault, "AddColumnNonConstantDefault"},
 }
 
 var flag2str = func() map[Feature]string {
