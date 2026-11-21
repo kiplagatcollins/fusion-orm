@@ -375,6 +375,27 @@ func (db *DB) Migrator(opts ...migrator.Option) (*migrator.Migrator, error) {
 	if err != nil {
 		return nil, err
 	}
+	// AutoMigrate DDL can invalidate prepared statements sitting on a
+	// stale schema (GORM #7255 class): clear every cache the session can
+	// reach (transaction-scoped and pool-scoped). Clearing twice is a
+	// no-op, so no dedup is needed.
+	var statementPool ConnPool
+	if db.Statement != nil {
+		statementPool = db.Statement.ConnPool
+	}
+	var invalidators []func()
+	for _, candidate := range []ConnPool{statementPool, db.Config.ConnPool} {
+		if invalidator, ok := candidate.(interface{ InvalidatePrepared() }); ok {
+			invalidators = append(invalidators, invalidator.InvalidatePrepared)
+		}
+	}
+	if len(invalidators) > 0 {
+		opts = append(opts, migrator.WithCacheInvalidator(func() {
+			for _, invalidate := range invalidators {
+				invalidate()
+			}
+		}))
+	}
 	return migrator.New(pool, db.Dialector, db.tables, opts...), nil
 }
 

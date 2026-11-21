@@ -403,3 +403,47 @@ func TestAuditIndexNameScopedPerTable(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------- class B
+
+// TestAuditStmtCacheEvictionClosesInUseStmt: a statement returned by the
+// cache must stay executable for the caller; concurrent LRU eviction must
+// not Close it between lookup and use. GORM #7831 class.
+func TestAuditStmtCacheEvictionClosesInUseStmt(t *testing.T) {
+	db := openTestDB(t)
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := newStmtCache(1, 0)
+	stmtA, releaseA, err := c.get(t.Context(), pool, "SELECT 1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Evict A (capacity 1): drops A from the cache while the caller still
+	// holds it; Close must wait for releaseA.
+	if _, releaseB, err := c.get(t.Context(), pool, "SELECT 2"); err != nil {
+		t.Fatal(err)
+	} else {
+		releaseB()
+	}
+	if _, err := stmtA.ExecContext(t.Context()); err != nil {
+		t.Errorf("statement returned by cache.get was closed before use: %v (GORM #7831)", err)
+	}
+	releaseA()
+}
+
+// TestAuditPreparedPoolForwardsPing: Open's automatic ping (and callers)
+// must work when PrepareStmt wraps the pool. GORM #6181 class.
+func TestAuditPreparedPoolForwardsPing(t *testing.T) {
+	db := openTestDB(t, &Config{PrepareStmt: true})
+	pool, err := db.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = pool
+	raw := newPreparedPool(pool, 10, 0)
+	if _, ok := any(raw).(interface{ Ping() error }); !ok {
+		t.Error("preparedPool does not implement Ping: automatic ping is silently skipped (GORM #6181)")
+	}
+}

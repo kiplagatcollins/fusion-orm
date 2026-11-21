@@ -14,46 +14,6 @@ import (
 	"github.com/kiplagatcollins/fusion-orm/clause"
 )
 
-// ---------------------------------------------------------------- class B
-
-// TestAuditStmtCacheEvictionClosesInUseStmt: a statement returned by the
-// cache must stay executable for the caller; concurrent LRU eviction must
-// not Close it between lookup and use. GORM #7831 class.
-func TestAuditStmtCacheEvictionClosesInUseStmt(t *testing.T) {
-	db := openTestDB(t)
-	pool, err := db.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := newStmtCache(1, 0)
-	stmtA, err := c.get(t.Context(), pool, "SELECT 1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Evict A (capacity 1): drops and Closes A while the caller still holds it.
-	if _, err := c.get(t.Context(), pool, "SELECT 2"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := stmtA.ExecContext(t.Context()); err != nil {
-		t.Errorf("statement returned by cache.get was closed before use: %v (GORM #7831)", err)
-	}
-}
-
-// TestAuditPreparedPoolForwardsPing: Open's automatic ping (and callers)
-// must work when PrepareStmt wraps the pool. GORM #6181 class.
-func TestAuditPreparedPoolForwardsPing(t *testing.T) {
-	db := openTestDB(t, &Config{PrepareStmt: true})
-	pool, err := db.DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = pool
-	raw := newPreparedPool(pool, 10, 0)
-	if _, ok := any(raw).(interface{ Ping() error }); !ok {
-		t.Error("preparedPool does not implement Ping: automatic ping is silently skipped (GORM #6181)")
-	}
-}
-
 // ---------------------------------------------------------------- class C
 
 // TestAuditRowNeverNil: Row() must not return nil on build errors — a nil

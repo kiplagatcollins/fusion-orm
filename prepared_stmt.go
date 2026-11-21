@@ -14,6 +14,13 @@ type stmtEntry struct {
 	stmt    *sql.Stmt
 	expires time.Time
 	elem    *list.Element
+	// refs counts in-flight acquisitions of this entry; retired marks it
+	// as gone from the cache. Both are guarded by stmtCache.mu, and the
+	// underlying *sql.Stmt is only Closed when retired is set and refs
+	// reaches zero — so a statement handed to a caller can never be
+	// closed under it by a concurrent LRU eviction (GORM #7831 class).
+	refs    int
+	retired bool
 }
 
 type stmtCache struct {
@@ -31,14 +38,19 @@ func newStmtCache(capacity int, ttl time.Duration) *stmtCache {
 	return &stmtCache{cap: capacity, ttl: ttl, items: make(map[string]*stmtEntry), order: list.New()}
 }
 
-func (c *stmtCache) get(ctx context.Context, pool ConnPool, query string) (*sql.Stmt, error) {
+// get returns a cached (or freshly prepared) statement plus a release func
+// the caller must invoke exactly once (usually via defer). Until release
+// runs the statement is protected from eviction: it leaves the cache
+// immediately on eviction but its Close is deferred to the last release.
+func (c *stmtCache) get(ctx context.Context, pool ConnPool, query string) (*sql.Stmt, func(), error) {
 	now := time.Now()
 	c.mu.Lock()
 	if entry, ok := c.items[query]; ok {
 		if c.ttl == 0 || now.Before(entry.expires) {
 			c.order.MoveToFront(entry.elem)
+			entry.refs++
 			c.mu.Unlock()
-			return entry.stmt, nil
+			return entry.stmt, c.releaser(entry), nil
 		}
 		c.dropLocked(query, entry)
 	}
@@ -46,14 +58,15 @@ func (c *stmtCache) get(ctx context.Context, pool ConnPool, query string) (*sql.
 
 	stmt, err := pool.PrepareContext(ctx, query)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	c.mu.Lock()
 	if existing, ok := c.items[query]; ok && (c.ttl == 0 || time.Now().Before(existing.expires)) {
-		c.mu.Unlock()
-		_ = stmt.Close()
 		c.order.MoveToFront(existing.elem)
-		return existing.stmt, nil
+		existing.refs++
+		c.mu.Unlock()
+		_ = stmt.Close() // lost the prepare race; nobody acquired it
+		return existing.stmt, c.releaser(existing), nil
 	}
 	if existing, ok := c.items[query]; ok {
 		c.dropLocked(query, existing)
@@ -62,23 +75,52 @@ func (c *stmtCache) get(ctx context.Context, pool ConnPool, query string) (*sql.
 	if c.ttl > 0 {
 		expires = time.Now().Add(c.ttl)
 	}
-	entry := &stmtEntry{stmt: stmt, expires: expires, elem: c.order.PushFront(query)}
+	entry := &stmtEntry{stmt: stmt, expires: expires, elem: c.order.PushFront(query), refs: 1}
 	c.items[query] = entry
 	for c.order.Len() > c.cap {
 		oldest := c.order.Back()
 		key, _ := oldest.Value.(string)
-		if entry := c.items[key]; entry != nil {
-			c.dropLocked(key, entry)
+		victim := c.items[key]
+		if victim == nil {
+			c.order.Remove(oldest)
+			continue
 		}
+		if victim == entry {
+			break // never evict the statement just inserted
+		}
+		c.dropLocked(key, victim)
 	}
 	c.mu.Unlock()
-	return stmt, nil
+	return stmt, c.releaser(entry), nil
 }
 
+// releaser returns an idempotent func that drops one acquisition reference,
+// closing the statement if it has since been retired. The once guard is per
+// acquisition: one entry can be held by several callers at once.
+func (c *stmtCache) releaser(entry *stmtEntry) func() {
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			entry.refs--
+			if entry.retired && entry.refs == 0 {
+				_ = entry.stmt.Close()
+			}
+		})
+	}
+}
+
+// dropLocked retires an entry: it leaves the cache immediately, but the
+// underlying statement is only closed once every in-flight holder has
+// released it. The caller must hold c.mu.
 func (c *stmtCache) dropLocked(query string, entry *stmtEntry) {
 	delete(c.items, query)
 	c.order.Remove(entry.elem)
-	_ = entry.stmt.Close()
+	entry.retired = true
+	if entry.refs == 0 {
+		_ = entry.stmt.Close()
+	}
 }
 
 func (c *stmtCache) remove(query string) {
@@ -117,10 +159,11 @@ func (p *preparedPool) PrepareContext(ctx context.Context, query string) (*sql.S
 }
 
 func (p *preparedPool) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	stmt, err := p.cache.get(ctx, p.pool, query)
+	stmt, release, err := p.cache.get(ctx, p.pool, query)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	result, err := stmt.ExecContext(ctx, args...)
 	if errors.Is(err, driver.ErrBadConn) {
 		p.cache.remove(query)
@@ -130,10 +173,11 @@ func (p *preparedPool) ExecContext(ctx context.Context, query string, args ...an
 }
 
 func (p *preparedPool) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	stmt, err := p.cache.get(ctx, p.pool, query)
+	stmt, release, err := p.cache.get(ctx, p.pool, query)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	rows, err := stmt.QueryContext(ctx, args...)
 	if errors.Is(err, driver.ErrBadConn) {
 		p.cache.remove(query)
@@ -143,15 +187,31 @@ func (p *preparedPool) QueryContext(ctx context.Context, query string, args ...a
 }
 
 func (p *preparedPool) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	stmt, err := p.cache.get(ctx, p.pool, query)
+	stmt, release, err := p.cache.get(ctx, p.pool, query)
 	if err != nil {
 		if ctx == nil {
 			ctx = context.TODO()
 		}
 		return p.pool.QueryRowContext(ctx, query, args...)
 	}
+	defer release()
 	return stmt.QueryRowContext(ctx, args...)
 }
+
+// Ping forwards to the wrapped pool, keeping Open's automatic ping and
+// caller-initiated pings working when statement caching is enabled
+// (GORM #6181 class).
+func (p *preparedPool) Ping() error {
+	if pinger, ok := p.pool.(interface{ Ping() error }); ok {
+		return pinger.Ping()
+	}
+	return nil
+}
+
+// InvalidatePrepared drops every cached statement, e.g. after DDL may have
+// changed the schema under a cached query (GORM #7255 class). Statements
+// still held by in-flight callers are closed on their release.
+func (p *preparedPool) InvalidatePrepared() { p.cache.close() }
 
 func (p *preparedPool) BeginTx(ctx context.Context, opts *sql.TxOptions) (ConnPool, error) {
 	return beginPrepared(ctx, p.pool, opts)
@@ -188,10 +248,11 @@ func (t *preparedTx) PrepareContext(ctx context.Context, query string) (*sql.Stm
 }
 
 func (t *preparedTx) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	stmt, err := t.cache.get(ctx, t.tx, query)
+	stmt, release, err := t.cache.get(ctx, t.tx, query)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	result, err := stmt.ExecContext(ctx, args...)
 	if errors.Is(err, driver.ErrBadConn) {
 		t.cache.remove(query)
@@ -201,10 +262,11 @@ func (t *preparedTx) ExecContext(ctx context.Context, query string, args ...any)
 }
 
 func (t *preparedTx) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	stmt, err := t.cache.get(ctx, t.tx, query)
+	stmt, release, err := t.cache.get(ctx, t.tx, query)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	rows, err := stmt.QueryContext(ctx, args...)
 	if errors.Is(err, driver.ErrBadConn) {
 		t.cache.remove(query)
@@ -214,12 +276,17 @@ func (t *preparedTx) QueryContext(ctx context.Context, query string, args ...any
 }
 
 func (t *preparedTx) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	stmt, err := t.cache.get(ctx, t.tx, query)
+	stmt, release, err := t.cache.get(ctx, t.tx, query)
 	if err != nil {
 		return t.tx.QueryRowContext(ctx, query, args...)
 	}
+	defer release()
 	return stmt.QueryRowContext(ctx, args...)
 }
+
+// InvalidatePrepared drops the transaction's cached statements; see
+// preparedPool.InvalidatePrepared.
+func (t *preparedTx) InvalidatePrepared() { t.cache.close() }
 
 func (t *preparedTx) Commit() error {
 	committer, ok := t.tx.(TxCommitter)

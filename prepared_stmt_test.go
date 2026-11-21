@@ -87,25 +87,30 @@ func TestStmtCacheLRUAndTTL(t *testing.T) {
 	cache := newStmtCache(1, time.Millisecond)
 	ctx := context.Background()
 
-	if _, err := cache.get(ctx, pool, `SELECT 1`); err != nil {
+	_, release, err := cache.get(ctx, pool, `SELECT 1`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cache.get(ctx, pool, `SELECT 1`); err != nil {
+	release()
+	if _, release, err = cache.get(ctx, pool, `SELECT 1`); err != nil {
 		t.Fatal(err)
 	}
+	release()
 	if pool.prepares != 1 {
 		t.Fatalf("prepares = %d, want 1", pool.prepares)
 	}
 	time.Sleep(2 * time.Millisecond)
-	if _, err := cache.get(ctx, pool, `SELECT 1`); err != nil {
+	if _, release, err = cache.get(ctx, pool, `SELECT 1`); err != nil {
 		t.Fatal(err)
 	}
+	release()
 	if pool.prepares != 2 {
 		t.Errorf("prepares after TTL = %d, want 2", pool.prepares)
 	}
-	if _, err := cache.get(ctx, pool, `SELECT 2`); err != nil {
+	if _, release, err = cache.get(ctx, pool, `SELECT 2`); err != nil {
 		t.Fatal(err)
 	}
+	release()
 	if cache.len() != 1 {
 		t.Errorf("cache size after LRU eviction = %d, want 1", cache.len())
 	}
@@ -144,5 +149,47 @@ func TestPreparedTxWithoutCommitter(t *testing.T) {
 	}
 	if err := tx.Rollback(); !errors.Is(err, ErrInvalidTransaction) {
 		t.Errorf("Rollback = %v, want ErrInvalidTransaction", err)
+	}
+}
+
+// TestAutoMigrateInvalidatesPreparedCache: DDL may change tables under a
+// cached prepared statement; AutoMigrate must drop the cache (GORM #7255
+// class).
+func TestAutoMigrateInvalidatesPreparedCache(t *testing.T) {
+	db := openTestDB(t, &Config{PrepareStmt: true, Logger: logger.Discard})
+	if err := db.Exec(`CREATE TABLE inv_users (id INTEGER PRIMARY KEY, name TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	var n int64
+	if err := db.Statement.ConnPool.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM inv_users`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	pool, ok := db.Config.ConnPool.(*preparedPool)
+	if !ok {
+		t.Fatal("PrepareStmt did not install the wrapper")
+	}
+	if pool.cache.len() == 0 {
+		t.Fatal("expected the SELECT to be cached before migration")
+	}
+	type invUser struct {
+		ID    int64 `fusion:"pk"`
+		Name  string
+		Email string // absent from the table: forces a real migration
+	}
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(t.Context(), &invUser{}); err != nil {
+		t.Fatalf("AutoMigrate: %v", err)
+	}
+	if pool.cache.len() != 0 {
+		t.Errorf("prepared cache still holds %d entries after AutoMigrate (GORM #7255)", pool.cache.len())
+	}
+	// The repurposed query must work against the migrated schema.
+	if err := db.Statement.ConnPool.QueryRowContext(t.Context(),
+		`SELECT COUNT(*) FROM inv_users`).Scan(&n); err != nil {
+		t.Errorf("query after invalidation: %v", err)
 	}
 }

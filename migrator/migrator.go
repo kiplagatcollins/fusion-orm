@@ -52,6 +52,17 @@ func WithMarkAppliedOnSuccess(enabled bool) Option {
 	return func(m *Migrator) { m.markApplied = enabled }
 }
 
+// WithCacheInvalidator registers a callback run after AutoMigrate DDL so the
+// caller can drop cached prepared statements that may sit on a stale schema
+// (GORM #7255 class).
+func WithCacheInvalidator(fn func()) Option {
+	return func(m *Migrator) {
+		if fn != nil {
+			m.onDDL = fn
+		}
+	}
+}
+
 // Migrator performs schema operations on one pool.
 type Migrator struct {
 	db          *sql.DB
@@ -59,6 +70,7 @@ type Migrator struct {
 	tables      *schema.Tables
 	lockTable   string
 	markApplied bool
+	onDDL       func()
 	mu          sync.Mutex
 	migrations  []Migration
 }
@@ -410,6 +422,11 @@ func (m *Migrator) AutoMigrate(ctx context.Context, values ...any) error {
 		if err := m.createJunctions(ctx, table); err != nil {
 			return err
 		}
+	}
+	// DDL may have changed tables under cached prepared statements
+	// (GORM #7255 class).
+	if m.onDDL != nil {
+		m.onDDL()
 	}
 	return nil
 }
