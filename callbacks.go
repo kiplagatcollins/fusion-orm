@@ -14,15 +14,23 @@ var (
 	// ErrCallbackNotFound is returned by Replace/Remove/Before/After when
 	// the anchor name is not registered.
 	ErrCallbackNotFound = errors.New("callback not found")
+	// ErrCallbackPanic records a callback panic on db.Error so the chain's
+	// finalizers release the transaction before the panic is re-thrown.
+	ErrCallbackPanic = errors.New("callback panicked")
 )
+
+// finalizerName is the chain entry that owns the transaction boundary; it is
+// marked as a finalizer so it runs even after an error or a panic.
+const finalizerName = "fusion:commit_or_rollback"
 
 // Callback is one step in a CRUD processor.
 type Callback func(*DB)
 
 type callbackEntry struct {
-	name  string
-	fn    Callback
-	match func(*DB) bool
+	name      string
+	fn        Callback
+	match     func(*DB) bool
+	finalizer bool
 }
 
 // CallbackProcessor is an ordered, name-addressable callback list.
@@ -39,6 +47,18 @@ func (p *CallbackProcessor) Register(name string, fn Callback) error {
 	}
 	p.entries = append(p.entries, callbackEntry{name: name, fn: fn})
 	return nil
+}
+
+// MarkFinalizer flags name as a finalizer: it runs even when the chain
+// stopped early because of an error or recovered from a panic.
+func (p *CallbackProcessor) MarkFinalizer(name string) error {
+	for i := range p.entries {
+		if p.entries[i].name == name {
+			p.entries[i].finalizer = true
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", ErrCallbackNotFound, name)
 }
 
 // Replace swaps the implementation of an existing callback.
@@ -104,15 +124,46 @@ func (p *CallbackProcessor) Match(match func(*DB) bool) error {
 	return nil
 }
 
-// Execute runs the chain in order, stopping when the error slot is set.
+// Execute runs the chain in order, stopping non-finalizer entries when the
+// error slot is set. Finalizers always run — after success, after an error,
+// and from panic recovery — so the transaction boundary is never skipped. A
+// panic is recovered only long enough to roll back: db.Error is set when
+// still nil, finalizers run, and the original value is re-panicked.
 func (p *CallbackProcessor) Execute(db *DB) {
+	executed := make(map[string]bool, len(p.entries))
+	defer func() {
+		if r := recover(); r != nil {
+			if db.Error == nil {
+				db.Error = fmt.Errorf("%w: %v", ErrCallbackPanic, r)
+			}
+			p.runFinalizers(db, executed)
+			panic(r)
+		}
+	}()
 	for _, entry := range p.entries {
 		if db.Error != nil {
-			return
+			break
 		}
 		if entry.match != nil && !entry.match(db) {
 			continue
 		}
+		executed[entry.name] = true
+		entry.fn(db)
+	}
+	p.runFinalizers(db, executed)
+}
+
+// runFinalizers executes finalizer entries that have not run yet. Entries are
+// marked before invocation so a panicking finalizer cannot run twice.
+func (p *CallbackProcessor) runFinalizers(db *DB, executed map[string]bool) {
+	for _, entry := range p.entries {
+		if !entry.finalizer || executed[entry.name] {
+			continue
+		}
+		if entry.match != nil && !entry.match(db) {
+			continue
+		}
+		executed[entry.name] = true
 		entry.fn(db)
 	}
 }
@@ -168,6 +219,9 @@ func newCallbackManager() *CallbackManager {
 				continue
 			}
 			_ = spec.p.Register(name, fn)
+			if name == finalizerName {
+				_ = spec.p.MarkFinalizer(name)
+			}
 		}
 	}
 	return m
