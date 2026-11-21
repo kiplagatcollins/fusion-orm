@@ -224,6 +224,10 @@ func insertRows(db *DB) {
 	}
 	for i := range values {
 		setTimestamps(db, values[i], table, true)
+		if err := applyPKGenerators(table, values[i]); err != nil {
+			db.AddError(err)
+			return
+		}
 	}
 	columns := insertColumns(table)
 	batch := db.Statement.CreateBatchSize
@@ -342,6 +346,24 @@ func backfillFromLastInsertID(db *DB, values []reflect.Value, table *schema.Tabl
 			setPrimaryKeyValue(values[0], table, pk, id)
 		}
 	}
+}
+
+// applyPKGenerators fills zero primary keys whose dialect-agnostic generator
+// was resolved at table init (uuid v7). Pre-set ids are respected.
+func applyPKGenerators(table *schema.Table, value reflect.Value) error {
+	for _, field := range table.Fields {
+		if field.PKGenerator == nil {
+			continue
+		}
+		fv := fieldAt(value, field.Index)
+		if !fv.IsValid() || !fv.CanSet() || !field.IsZero(fv) {
+			continue
+		}
+		if err := field.PKGenerator(fv); err != nil {
+			return fmt.Errorf("generate %s: %w", field.DBName, err)
+		}
+	}
+	return nil
 }
 
 func setPrimaryKeyValue(value reflect.Value, table *schema.Table, pk *schema.Field, id any) {
