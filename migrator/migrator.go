@@ -146,7 +146,7 @@ func (m *Migrator) mappedSQLType(sqlType string) string {
 	return sqlType
 }
 
-func (m *Migrator) columnDefinition(field *schema.Field) string {
+func (m *Migrator) columnDefinition(field *schema.Field, inlinePK bool) string {
 	typ := m.sqlType(field)
 	primary := field.PrimaryKey
 	if primary && field.AutoIncrement && m.has(feature.SerialColumn) {
@@ -163,12 +163,11 @@ func (m *Migrator) columnDefinition(field *schema.Field) string {
 		b.WriteString(" DEFAULT ")
 		b.WriteString(field.DefaultValue)
 	}
-	if primary && !field.AutoIncrement {
+	// Composite primary keys are declared table-level by createTableSQL;
+	// inlining them per column would emit multiple PRIMARY KEY clauses.
+	if primary && (inlinePK || field.AutoIncrement) {
 		b.WriteString(" PRIMARY KEY")
-	}
-	if primary && field.AutoIncrement {
-		b.WriteString(" PRIMARY KEY")
-		if m.has(feature.AutoIncrementClause) {
+		if field.AutoIncrement && m.has(feature.AutoIncrementClause) {
 			b.WriteString(" AUTOINCREMENT")
 		}
 	}
@@ -208,8 +207,9 @@ func (m *Migrator) CreateTable(ctx context.Context, model any) error {
 // quotedName so the same schema can be materialized under a temp name.
 func (m *Migrator) createTableSQL(table *schema.Table, quotedName string) string {
 	definitions := make([]string, 0, len(table.Fields)+1)
+	inlinePK := len(table.PKs) <= 1
 	for _, field := range table.Fields {
-		definitions = append(definitions, m.columnDefinition(field))
+		definitions = append(definitions, m.columnDefinition(field, inlinePK))
 	}
 	if len(table.PKs) > 1 {
 		keys := make([]string, 0, len(table.PKs))
@@ -292,7 +292,7 @@ func (m *Migrator) ColumnTypes(ctx context.Context, name string) ([]Column, erro
 
 // AddColumn adds one column to an existing table.
 func (m *Migrator) AddColumn(ctx context.Context, table string, field *schema.Field) error {
-	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", m.quote(table), m.columnDefinition(field))
+	stmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", m.quote(table), m.columnDefinition(field, true))
 	if _, err := m.db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("add column %s.%s: %w", table, field.DBName, err)
 	}
@@ -404,58 +404,122 @@ func (m *Migrator) AutoMigrate(ctx context.Context, values ...any) error {
 			if err := m.CreateTable(ctx, value); err != nil {
 				return err
 			}
-			continue
-		}
-		columns, err := m.ColumnTypes(ctx, table.Name)
-		if err != nil {
+		} else if err := m.migrateExistingTable(ctx, table); err != nil {
 			return err
 		}
-		present := make(map[string]Column, len(columns))
-		for _, col := range columns {
-			present[strings.ToLower(col.Name)] = col
-		}
-		var missing []*schema.Field
-		for _, field := range table.Fields {
-			if _, ok := present[strings.ToLower(field.DBName)]; !ok {
-				missing = append(missing, field)
-			}
-		}
-		if len(missing) > 0 {
-			rebuild := false
-			for _, field := range missing {
-				if m.needsRebuild(field) {
-					rebuild = true
-					break
-				}
-			}
-			if rebuild {
-				if err := m.rebuildTable(ctx, table); err != nil {
-					return err
-				}
-			} else {
-				for _, field := range missing {
-					if err := m.AddColumn(ctx, table.Name, field); err != nil {
-						return err
-					}
-				}
-			}
-		}
-		for _, field := range table.Fields {
-			existing, ok := present[strings.ToLower(field.DBName)]
-			if !ok {
-				continue
-			}
-			if existing.Type != "" && !typeCompatible(existing.Type, m.sqlType(field)) {
-				if err := m.AlterColumn(ctx, table.Name, field); err != nil {
-					return err
-				}
-			}
-		}
-		if err := m.createIndexes(ctx, table); err != nil {
+		if err := m.createJunctions(ctx, table); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// migrateExistingTable brings an existing table up to the parsed schema:
+// missing columns (with a rebuild when required), type changes, and indexes.
+func (m *Migrator) migrateExistingTable(ctx context.Context, table *schema.Table) error {
+	columns, err := m.ColumnTypes(ctx, table.Name)
+	if err != nil {
+		return err
+	}
+	present := make(map[string]Column, len(columns))
+	for _, col := range columns {
+		present[strings.ToLower(col.Name)] = col
+	}
+	var missing []*schema.Field
+	for _, field := range table.Fields {
+		if _, ok := present[strings.ToLower(field.DBName)]; !ok {
+			missing = append(missing, field)
+		}
+	}
+	if len(missing) > 0 {
+		rebuild := false
+		for _, field := range missing {
+			if m.needsRebuild(field) {
+				rebuild = true
+				break
+			}
+		}
+		if rebuild {
+			if err := m.rebuildTable(ctx, table); err != nil {
+				return err
+			}
+		} else {
+			for _, field := range missing {
+				if err := m.AddColumn(ctx, table.Name, field); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	for _, field := range table.Fields {
+		existing, ok := present[strings.ToLower(field.DBName)]
+		if !ok {
+			continue
+		}
+		if existing.Type != "" && !typeCompatible(existing.Type, m.sqlType(field)) {
+			if err := m.AlterColumn(ctx, table.Name, field); err != nil {
+				return err
+			}
+		}
+	}
+	return m.createIndexes(ctx, table)
+}
+
+// createJunctions materializes many-to-many junction tables declared by the
+// model's relations. Each junction carries a composite primary key so a
+// duplicate pair cannot be inserted at the storage layer.
+func (m *Migrator) createJunctions(ctx context.Context, table *schema.Table) error {
+	for _, rel := range table.Relations {
+		if rel.Kind != schema.ManyToMany || rel.M2MName == "" {
+			continue
+		}
+		if rel.Reference == nil || rel.ForeignKey == nil {
+			// A side without a primary key cannot be typed; keep prior
+			// behavior and let relation queries surface the problem.
+			continue
+		}
+		exists, err := m.HasTable(ctx, rel.M2MName)
+		if err != nil {
+			return err
+		}
+		if exists {
+			continue
+		}
+		junction := junctionTable(rel)
+		stmt := m.createTableSQL(junction, m.quote(junction.Name))
+		if _, err := m.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("create join table %s: %w", junction.Name, err)
+		}
+	}
+	return nil
+}
+
+// junctionTable builds the schema of a junction table: two key columns typed
+// after the related tables' primary keys, both part of the primary key.
+func junctionTable(rel *schema.Relation) *schema.Table {
+	fk := junctionField(rel.Reference, rel.M2MForeignKey)
+	ref := junctionField(rel.ForeignKey, rel.M2MReferences)
+	return &schema.Table{
+		Name:   rel.M2MName,
+		Fields: []*schema.Field{fk, ref},
+		PKs:    []*schema.Field{fk, ref},
+	}
+}
+
+func junctionField(pk *schema.Field, name string) *schema.Field {
+	return &schema.Field{
+		Name:         name,
+		DBName:       name,
+		IndirectType: pk.IndirectType,
+		IsPtr:        pk.IsPtr,
+		DataType:     pk.DataType,
+		SQLType:      pk.SQLType,
+		PrimaryKey:   true,
+		NotNull:      true,
+		Creatable:    true,
+		Updatable:    true,
+		Readable:     true,
+	}
 }
 
 func typeCompatible(existing, declared string) bool {

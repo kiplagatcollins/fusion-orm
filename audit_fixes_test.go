@@ -325,3 +325,43 @@ func TestAuditM2MAppendIdempotent(t *testing.T) {
 		t.Errorf("junction rows for (1,1) = %d, want 1 (idempotent append; GORM #5579)", n)
 	}
 }
+
+// ---------------------------------------------------------------- class K
+
+type m2mAUser struct {
+	ID    int64      `fusion:"pk,autoincrement"`
+	Roles []m2mARole `fusion:"rel:many2many,many2many:m2m_a_roles"`
+}
+
+type m2mARole struct {
+	ID   int64 `fusion:"pk,autoincrement"`
+	Name string
+}
+
+// TestAuditAutoMigrateCreatesM2MJunction: AutoMigrate must materialize the
+// junction table for many-to-many relations. GORM #7006-adjacent.
+func TestAuditAutoMigrateCreatesM2MJunction(t *testing.T) {
+	db := openTestDB(t)
+	table, err := db.Parse(&m2mAUser{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := table.Relations["Roles"]
+	if rel == nil {
+		t.Fatal("Roles relation not parsed")
+	}
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(t.Context(), &m2mAUser{}, &m2mARole{}); err != nil {
+		t.Fatal(err)
+	}
+	exists, err := m.HasTable(t.Context(), rel.M2MName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Errorf("junction table %q not created by AutoMigrate", rel.M2MName)
+	}
+}
