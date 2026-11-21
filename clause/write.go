@@ -86,6 +86,10 @@ type OnConflict struct {
 	Columns       []string
 	DoNothing     bool
 	UpdateColumns []string
+	// UpdateAll expands to every non-primary-key column of the model;
+	// Statement.BuildClauses fills UpdateColumns and falls back to the
+	// primary key as the conflict target.
+	UpdateAll bool
 }
 
 // Name implements Interface.
@@ -96,18 +100,18 @@ func (o OnConflict) Build(b Builder) {
 	if !b.Dialector().Features().Has(feature.InsertOnConflict) {
 		return
 	}
-	b.WriteString("ON CONFLICT (")
-	for i, col := range o.Columns {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteQuoted(col)
-	}
+	o.writeTarget(b)
 	if o.DoNothing {
-		b.WriteString(") DO NOTHING")
+		b.WriteString(" DO NOTHING")
 		return
 	}
-	b.WriteString(") DO UPDATE SET ")
+	if len(o.UpdateColumns) == 0 {
+		// Nothing to update: skip the clause rather than emit invalid SQL
+		// such as "ON CONFLICT ()" or a dangling "DO UPDATE SET"
+		// (GORM #7346 empty-target class).
+		return
+	}
+	b.WriteString(" DO UPDATE SET ")
 	for i, col := range o.UpdateColumns {
 		if i > 0 {
 			b.WriteString(", ")
@@ -116,6 +120,23 @@ func (o OnConflict) Build(b Builder) {
 		b.WriteString(" = EXCLUDED.")
 		b.WriteQuoted(col)
 	}
+}
+
+// writeTarget renders "ON CONFLICT" plus the optional "(cols)" group — an
+// empty target renders no parentheses, never "ON CONFLICT ()".
+func (o OnConflict) writeTarget(b Builder) {
+	b.WriteString("ON CONFLICT")
+	if len(o.Columns) == 0 {
+		return
+	}
+	b.WriteString(" (")
+	for i, col := range o.Columns {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteQuoted(col)
+	}
+	b.WriteString(")")
 }
 
 // Returning renders RETURNING columns on dialects with the feature.

@@ -482,3 +482,58 @@ func TestAuditScopeErrorsPropagate(t *testing.T) {
 		t.Error("error raised inside a scope was dropped by applyScopes (GORM #6283 class)")
 	}
 }
+
+// TestOnConflictRuntimeUpsert executes real upserts against SQLite so the
+// rendered ON CONFLICT SQL is validated by the engine: a manual column set
+// (target normalized to the primary key) and UpdateAll.
+func TestOnConflictRuntimeUpsert(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.Exec(`CREATE TABLE upsert_users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	type upsertUser struct {
+		ID   int64 `fusion:"pk"`
+		Name string
+		Age  int
+	}
+	upsert := clause.OnConflict{UpdateColumns: []string{"name", "age"}}
+	if err := db.Clauses(upsert).Create(&upsertUser{ID: 1, Name: "a", Age: 10}).Error; err != nil {
+		t.Fatalf("initial insert: %v", err)
+	}
+	if err := db.Clauses(upsert).Create(&upsertUser{ID: 1, Name: "b", Age: 11}).Error; err != nil {
+		t.Fatalf("upsert: %v (engine rejected the rendered ON CONFLICT)", err)
+	}
+	var got upsertUser
+	if err := db.Find(&got, 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "b" || got.Age != 11 {
+		t.Errorf("after upsert got %+v, want name=b age=11", got)
+	}
+	if err := db.Clauses(clause.OnConflict{UpdateAll: true}).
+		Create(&upsertUser{ID: 1, Name: "c", Age: 12}).Error; err != nil {
+		t.Fatalf("UpdateAll upsert: %v", err)
+	}
+	if err := db.Find(&got, 1).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "c" || got.Age != 12 {
+		t.Errorf("after UpdateAll upsert got %+v, want name=c age=12", got)
+	}
+}
+
+// ---------------------------------------------------------------- class J
+
+// TestAuditOnConflictRendersNoEmptyTarget: ON CONFLICT with update columns
+// but no conflict target must not render the invalid `ON CONFLICT ()`.
+func TestAuditOnConflictRendersNoEmptyTarget(t *testing.T) {
+	db := openTestDB(t)
+	sql := db.ToSQL(func(tx *DB) *DB {
+		return tx.Table("audit_plain_users").
+			Clauses(clause.OnConflict{UpdateColumns: []string{"name"}}).
+			Find(&[]auditPlainUser{})
+	})
+	if strings.Contains(sql, "ON CONFLICT ()") {
+		t.Errorf("OnConflict rendered empty target %q", sql)
+	}
+}

@@ -125,6 +125,7 @@ var buildOrder = []string{
 // BuildClauses renders all registered clauses in order, binds vars, and
 // stores the result in SQL. Each build starts with a fresh var list.
 func (stmt *Statement) BuildClauses() []byte {
+	stmt.normalizeOnConflict()
 	b := &statementBuilder{stmt: stmt}
 	stmt.Vars = stmt.Vars[:0]
 	names := make([]string, 0, len(stmt.Order))
@@ -154,6 +155,53 @@ func (stmt *Statement) BuildClauses() []byte {
 	}
 	stmt.SQL = b.buf
 	return b.buf
+}
+
+// normalizeOnConflict fills an ON CONFLICT clause from the model's schema
+// before rendering: UpdateAll expands to every non-primary-key column, and
+// a DO UPDATE with no conflict target falls back to the primary key so the
+// upsert is portable across dialects (some reject a targetless DO UPDATE).
+// Unresolvable models are left untouched — OnConflict.Build never emits
+// "ON CONFLICT ()" regardless.
+func (stmt *Statement) normalizeOnConflict() {
+	raw, ok := stmt.Clauses["on_conflict"]
+	if !ok {
+		return
+	}
+	oc, ok := raw.(clause.OnConflict)
+	if !ok || oc.DoNothing || stmt.DB == nil || stmt.DB.tables == nil {
+		return
+	}
+	// Create builds from Dest, queries from Model.
+	model := stmt.Model
+	if model == nil {
+		model = stmt.Dest
+	}
+	if model == nil {
+		return
+	}
+	changed := false
+	if oc.UpdateAll && len(oc.UpdateColumns) == 0 {
+		if table, err := stmt.DB.tables.Parse(model); err == nil {
+			for _, field := range table.Fields {
+				if !field.PrimaryKey {
+					oc.UpdateColumns = append(oc.UpdateColumns, field.DBName)
+				}
+			}
+			changed = true
+		}
+	}
+	if len(oc.Columns) == 0 && len(oc.UpdateColumns) > 0 {
+		if table, err := stmt.DB.tables.Parse(model); err == nil {
+			for _, pk := range table.PKs {
+				oc.Columns = append(oc.Columns, pk.DBName)
+			}
+			changed = true
+		}
+	}
+	if changed {
+		stmt.Clauses["on_conflict"] = oc
+	}
 }
 
 type statementBuilder struct {
