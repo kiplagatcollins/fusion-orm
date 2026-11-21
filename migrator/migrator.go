@@ -471,7 +471,7 @@ func typeCompatible(existing, declared string) bool {
 			return "bool"
 		case "double precision", "float8", "real", "float", "double":
 			return "float"
-		case "character varying", "varchar", "text":
+		case "character varying", "varchar", "text", "uuid":
 			return "text"
 		case "timestamp", "timestamp without time zone", "datetime":
 			return "time"

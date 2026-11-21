@@ -66,8 +66,7 @@ type Field struct {
 	Scanner  ScannerFunc
 	IsZero   IsZeroFunc
 
-	// PKGenerator fills a zero primary-key value at create time. It is
-	// resolved only for uuid.UUID primary keys without autoincrement.
+	// PKGenerator fills a zero primary-key value at create time. It is resolved only for uuid.UUID (or *uuid.UUID, whose pointer is allocated and set) primary keys without autoincrement.
 	PKGenerator func(reflect.Value) error
 }
 

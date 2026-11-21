@@ -360,7 +360,7 @@ func applyPKGenerators(table *schema.Table, value reflect.Value) error {
 			continue
 		}
 		if err := field.PKGenerator(fv); err != nil {
-			return fmt.Errorf("generate %s: %w", field.DBName, err)
+			return err
 		}
 	}
 	return nil

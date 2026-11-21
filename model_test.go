@@ -20,7 +20,7 @@ type postWithUUID struct {
 
 func (postWithUUID) TableName() string { return "uuid_posts" }
 
-func setupUUIDModelDB(t *testing.T) *DB {
+func setupUUIDPostsDB(t *testing.T) *DB {
 	t.Helper()
 	dsn := filepath.Join(t.TempDir(), "uuidmodel.db")
 	db, err := Open(sqlite.Open(dsn), &Config{Logger: logger.Discard})
@@ -32,15 +32,15 @@ func setupUUIDModelDB(t *testing.T) *DB {
 			_ = pool.Close()
 		}
 	})
+	if err := db.Exec(`CREATE TABLE uuid_posts (id TEXT PRIMARY KEY, title TEXT, created_at DATETIME, updated_at DATETIME)`).Error; err != nil {
+		t.Fatal(err)
+	}
 	return db
 }
 
 func TestCreateFillsUUIDv7ID(t *testing.T) {
-	db := setupUUIDModelDB(t)
+	db := setupUUIDPostsDB(t)
 	ctx := context.Background()
-	if err := db.WithContext(ctx).Exec(`CREATE TABLE uuid_posts (id TEXT PRIMARY KEY, title TEXT, created_at DATETIME, updated_at DATETIME)`).Error; err != nil {
-		t.Fatal(err)
-	}
 	post := postWithUUID{Title: "hello"}
 	if err := db.WithContext(ctx).Create(&post).Error; err != nil {
 		t.Fatalf("create: %v", err)
@@ -61,11 +61,8 @@ func TestCreateFillsUUIDv7ID(t *testing.T) {
 }
 
 func TestCreateRespectsPresetUUID(t *testing.T) {
-	db := setupUUIDModelDB(t)
+	db := setupUUIDPostsDB(t)
 	ctx := context.Background()
-	if err := db.WithContext(ctx).Exec(`CREATE TABLE uuid_posts (id TEXT PRIMARY KEY, title TEXT, created_at DATETIME, updated_at DATETIME)`).Error; err != nil {
-		t.Fatal(err)
-	}
 	preset := uuid.Must(uuid.NewV7())
 	post := postWithUUID{ID: preset, Title: "preset"}
 	if err := db.WithContext(ctx).Create(&post).Error; err != nil {
@@ -77,11 +74,8 @@ func TestCreateRespectsPresetUUID(t *testing.T) {
 }
 
 func TestCreateBatchUniqueUUIDs(t *testing.T) {
-	db := setupUUIDModelDB(t)
+	db := setupUUIDPostsDB(t)
 	ctx := context.Background()
-	if err := db.WithContext(ctx).Exec(`CREATE TABLE uuid_posts (id TEXT PRIMARY KEY, title TEXT, created_at DATETIME, updated_at DATETIME)`).Error; err != nil {
-		t.Fatal(err)
-	}
 	posts := make([]postWithUUID, 5)
 	for i := range posts {
 		posts[i].Title = "batch"
@@ -116,7 +110,7 @@ type userWithNumericModel struct {
 func (userWithNumericModel) TableName() string { return "base_users" }
 
 func TestAutoMigrateUUIDModelColumnTypes(t *testing.T) {
-	db := setupUUIDModelDB(t)
+	db := setupUUIDPostsDB(t)
 	ctx := context.Background()
 	m, err := db.Migrator()
 	if err != nil {
@@ -136,18 +130,18 @@ func TestAutoMigrateUUIDModelColumnTypes(t *testing.T) {
 	if types["id"] != "TEXT" {
 		t.Errorf("id column type = %q, want TEXT", types["id"])
 	}
-	var indexes int
+	var deletedAtIndexes int
 	if err := db.Statement.ConnPool.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'base_uuid_users'`).Scan(&indexes); err != nil {
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = 'base_uuid_users' AND sql LIKE '%deleted_at%'`).Scan(&deletedAtIndexes); err != nil {
 		t.Fatal(err)
 	}
-	if indexes == 0 {
+	if deletedAtIndexes == 0 {
 		t.Error("deleted_at index missing")
 	}
 }
 
 func TestUUIDModelRoundTrip(t *testing.T) {
-	db := setupUUIDModelDB(t)
+	db := setupUUIDPostsDB(t)
 	ctx := context.Background()
 	m, err := db.Migrator()
 	if err != nil {
@@ -179,7 +173,7 @@ func TestUUIDModelRoundTrip(t *testing.T) {
 }
 
 func TestUUIDModelSoftDeleteLifecycle(t *testing.T) {
-	db := setupUUIDModelDB(t)
+	db := setupUUIDPostsDB(t)
 	ctx := context.Background()
 	m, err := db.Migrator()
 	if err != nil {
@@ -211,8 +205,44 @@ func TestUUIDModelSoftDeleteLifecycle(t *testing.T) {
 	}
 }
 
+func TestUUIDModelRestoreLifecycle(t *testing.T) {
+	db := setupUUIDPostsDB(t)
+	ctx := context.Background()
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(ctx, &userWithUUIDModel{}); err != nil {
+		t.Fatal(err)
+	}
+	user := userWithUUIDModel{Email: "restore@example.com"}
+	if err := db.WithContext(ctx).Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WithContext(ctx).Delete(&user).Error; err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	var count int64
+	if err := db.WithContext(ctx).Model(&userWithUUIDModel{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("soft-deleted row visible: %d, %v", count, err)
+	}
+	if err := db.Restore(&user).Error; err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	var found userWithUUIDModel
+	if err := db.WithContext(ctx).First(&found, "id = ?", user.ID).Error; err != nil {
+		t.Fatalf("first after restore: %v", err)
+	}
+	if found.DeletedAt.Valid {
+		t.Error("DeletedAt still set after restore")
+	}
+	if err := db.WithContext(ctx).Model(&userWithUUIDModel{}).Count(&count).Error; err != nil || count != 1 {
+		t.Errorf("count after restore = %d, %v", count, err)
+	}
+}
+
 func TestNumericModelBackfill(t *testing.T) {
-	db := setupUUIDModelDB(t)
+	db := setupUUIDPostsDB(t)
 	ctx := context.Background()
 	m, err := db.Migrator()
 	if err != nil {
@@ -237,5 +267,35 @@ func TestNumericModelBackfill(t *testing.T) {
 	}
 	if found.Email != "n@example.com" {
 		t.Errorf("email round trip = %q", found.Email)
+	}
+}
+
+func TestNumericModelSoftDeleteLifecycle(t *testing.T) {
+	db := setupUUIDPostsDB(t)
+	ctx := context.Background()
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(ctx, &userWithNumericModel{}); err != nil {
+		t.Fatal(err)
+	}
+	user := userWithNumericModel{Email: "del-n@example.com"}
+	if err := db.WithContext(ctx).Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WithContext(ctx).Delete(&user).Error; err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	var count int64
+	if err := db.WithContext(ctx).Model(&userWithNumericModel{}).Count(&count).Error; err != nil || count != 0 {
+		t.Errorf("soft-deleted row visible: %d, %v", count, err)
+	}
+	var hidden userWithNumericModel
+	if err := db.WithContext(ctx).Unscoped().First(&hidden, "id = ?", user.ID).Error; err != nil {
+		t.Fatalf("unscoped first: %v", err)
+	}
+	if !hidden.DeletedAt.Valid {
+		t.Error("deleted_at not set in DB after soft delete")
 	}
 }
