@@ -2,52 +2,55 @@
 
 **Scope**: all 450 open issues from `go-gorm/gorm` (pages 1–18), triaged into 17
 bug classes A–Q and inspected against fusion-orm v0.2.0 (`f3c1f77`).
-**Verdicts**: `AFFECTED` (bug present here), `SAFE` (code inspected, not affected),
-`N/A` (feature/dialect does not exist in fusion-orm), `UNCERTAIN` (cannot be
-decided without runtime evidence for a non-target platform).
+**Verdicts**: `FIXED` (was affected; fixed on branch `audit-fixes` with a
+default-suite regression test), `AFFECTED` (bug still present), `SAFE` (code
+inspected, not affected), `N/A` (feature/dialect does not exist in fusion-orm),
+`UNCERTAIN` (cannot be decided without runtime evidence for a non-target
+platform).
 **Method**: static inspection with `file:line` citations; every AFFECTED verdict
-has a repro in [`audit_repro_test.go`](../audit_repro_test.go)
-(`//go:build audit`) that asserts the *correct* behavior and currently **fails** —
-the failure output below is the recorded evidence.
+earned a repro test asserting the *correct* behavior. The fix phase promoted all
+18 repros into [`audit_fixes_test.go`](../audit_fixes_test.go) (default suite,
+all passing); the audit-tagged `audit_repro_test.go` was removed once green.
 
 ## Reproduce
 
 ```bash
-go test -tags=audit -run TestAudit -v .    # 18/18 expected to FAIL (evidence)
-go test ./...                              # default suite stays green
-go vet -tags=audit ./...                   # audit build compiles clean
+go test -run TestAudit -v .   # 18/18 promoted regression tests PASS
+go test ./...                 # full suite green
+go vet ./... && go vet -tags=audit ./...
 ```
 
 ## Summary
 
 | # | Class | Verdict | Repro test(s) | Representative GORM issues |
 |---|-------|---------|---------------|------------------------------|
-| A | Implicit tx / panic / rollback lifecycle | **AFFECTED (severe)** | `...ImplicitTxReleasedOnInsertError`, `...ImplicitTxReleasedOnHookPanic` | #7897, #7908, #7459 |
-| B | Prepared-stmt cache races & lifecycle | **AFFECTED** | `...StmtCacheEvictionClosesInUseStmt`, `...PreparedPoolForwardsPing` | #7831, #7832, #7788, #7465, #6181, #7255 |
-| C | Rows/Row lifecycle & NULL scanning | **AFFECTED (Row) / SAFE (rows)** | `...RowNeverNil` | #7575, #7855, #7403 |
+| A | Implicit tx / panic / rollback lifecycle | **FIXED (was severe)** | `...ImplicitTxReleasedOnInsertError`, `...ImplicitTxReleasedOnHookPanic` | #7897, #7908, #7459 |
+| B | Prepared-stmt cache races & lifecycle | **FIXED** | `...StmtCacheEvictionClosesInUseStmt`, `...PreparedPoolForwardsPing` | #7831, #7832, #7788, #7465, #6181, #7255 |
+| C | Rows/Row lifecycle & NULL scanning | **FIXED (Row) / SAFE (rows)** | `...RowNeverNil` | #7575, #7855, #7403 |
 | D | FindInBatches / limit & field mapping | SAFE (w/ composite-PK caveat) | — | #7737, #7384, #7657 |
-| E | Session reuse / chain clone / scope errors | **AFFECTED (scope errors)** | `...ScopeErrorsPropagate` | #6283, #7765, #5846 |
-| F | Condition building (Or/And/raw/map) | **AFFECTED (severe)** | `...ClauseOrRendersOr`, `...MapConditionSQLStable` | #5652, #7351, #5846 |
-| G | Count / aggregation | **AFFECTED** | `...CountStripsOrderBy` | #7516, #6005 |
-| H | Soft delete (guard, Or precedence, joins) | **AFFECTED (severe)** | `...GlobalSoftDeleteRequiresWhere`, `...SoftDeleteNotBypassedByOr`, `...RelationJoinOmitsSoftDeleted` | #6338, #6998, #5652, #7385 |
-| I | Save / batch insert / value encoding | **AFFECTED (Save slice)** | `...SaveSliceWithPKs` | #7540, #7389, #7878, #7835 |
-| J | OnConflict / upsert | **AFFECTED (low)** | `...OnConflictRendersNoEmptyTarget` | #7527 (feature gap) |
-| K | Associations & M2M (create, dup, migrate) | **AFFECTED** | `...HasManyResaveNoDuplicate`, `...M2MAppendIdempotent`, `...AutoMigrateCreatesM2MJunction` | #6119, #5579, #7365, #7006 |
+| E | Session reuse / chain clone / scope errors | **FIXED (scope errors)** | `...ScopeErrorsPropagate` | #6283, #7765, #5846 |
+| F | Condition building (Or/And/raw/map) | **FIXED (was severe)** | `...ClauseOrRendersOr`, `...MapConditionSQLStable` | #5652, #7351, #5846 |
+| G | Count / aggregation | **FIXED** | `...CountStripsOrderBy` | #7516, #6005 |
+| H | Soft delete (guard, Or precedence, joins) | **FIXED (was severe)** | `...GlobalSoftDeleteRequiresWhere`, `...SoftDeleteNotBypassedByOr`, `...RelationJoinOmitsSoftDeleted` | #6338, #6998, #5652, #7385 |
+| I | Save / batch insert / value encoding | **FIXED (Save slice)** | `...SaveSliceWithPKs` | #7540, #7389, #7878, #7835 |
+| J | OnConflict / upsert | **FIXED (low)** | `...OnConflictRendersNoEmptyTarget` | #7527 (feature gap) |
+| K | Associations & M2M (create, dup, migrate) | **FIXED** | `...HasManyResaveNoDuplicate`, `...M2MAppendIdempotent`, `...AutoMigrateCreatesM2MJunction` | #6119, #5579, #7365, #7006 |
 | L | Preload (N+1, joins, unscoped, FK) | SAFE | — | #6849 (known limit), #6750 (N/A) |
-| M | AutoMigrate (indexes, concurrency, rebuild) | **AFFECTED** | `...IndexNameScopedPerTable` | #7346, #7894, #5794, #6073 |
+| M | AutoMigrate (indexes, concurrency, rebuild) | **FIXED** | `...IndexNameScopedPerTable` | #7346, #7894, #5794, #6073 |
 | N | SetColumn / dirty-set semantics | N/A (API absent) | — | #7512, #7910 |
 | O | Logging hooks (format strings) | SAFE | — | #5261, #7583 |
 | P | Error wrapping / AddError | SAFE | — | #5964, #7459 |
 | Q | Model/metadata resolution | SAFE (composite-PK caveat) | — | #6060, #6795 |
 
 **Triage statistics**: 450 issues → 155 could-apply · 62 uncertain · 233 N/A.
-17 classes (A–Q); 18 repro tests, all currently failing.
+17 classes (A–Q); 11 classes fixed on `audit-fixes` (commits `9f5c590..bfc94d0`),
+18 regression tests promoted to the default suite, all passing.
 
 ---
 
 ## Detailed findings
 
-### A — Implicit transaction lifecycle  · AFFECTED (severe)
+### A — Implicit transaction lifecycle  · FIXED (was severe)
 
 * **Leak on any error**: `CallbackProcessor.Execute` returns on the first
   non-nil `db.Error` (`callbacks.go:108-118`), skipping every remaining entry —
@@ -71,7 +74,7 @@ go vet -tags=audit ./...                   # audit build compiles clean
   `commitOrRollback` must be invoked from a `defer` in the finisher), and the
   implicit-tx block needs `defer recover()` → rollback → re-panic.
 
-### B — Prepared-stmt cache lifecycle  · AFFECTED
+### B — Prepared-stmt cache lifecycle  · FIXED
 
 * **Eviction closes in-use statements**: `stmtCache.get`
   (`prepared_stmt.go:34-82`) has no reference counting; the LRU eviction and
@@ -89,7 +92,7 @@ go vet -tags=audit ./...                   # audit build compiles clean
   (`prepared_stmt.go:145-154`); the cache is not invalidated after
   `AutoMigrate` alters tables (#7255, mitigated by column-identity checks).
 
-### C — Rows/Row lifecycle  · AFFECTED (Row) / SAFE (rows)
+### C — Rows/Row lifecycle  · FIXED (Row) / SAFE (rows)
 
 * `Row()` returns a nil `*sql.Row` whenever the statement build fails —
   e.g. `db.Model(42).Row()` — so the caller's mandatory `row.Scan(...)`
@@ -108,7 +111,7 @@ go vet -tags=audit ./...                   # audit build compiles clean
   only (`schema/relation.go:129,136`) — composite-PK pagination walks only the
   first key (#7384/§Q).
 
-### E — Session reuse / scopes  · AFFECTED (low)
+### E — Session reuse / scopes  · FIXED (low)
 
 * **Scope errors dropped**: `applyScopes` copies only `next.Statement`
   (`chainable_api.go:287-300`); if a scope function raises an error on its
@@ -121,7 +124,7 @@ go vet -tags=audit ./...                   # audit build compiles clean
   hook/session state doesn't bleed. Clause inheritance across a session is by
   design. `Session` cannot override `PrepareStmt` (field absent — API gap).
 
-### F — Condition building  · AFFECTED (severe)
+### F — Condition building  · FIXED (was severe)
 
 * **`clause.Or` is broken**: `Condition.Build` (`clause/clause.go:56-63`) joins
   its `Exprs` with a hardcoded `"AND"` and ignores `Condition.Join`, so
@@ -136,7 +139,7 @@ go vet -tags=audit ./...                   # audit build compiles clean
 * **SAFE** otherwise: user `Or()` chains keep correct precedence via flat
   conds; the soft-delete *injection* ordering bug is class H, not here.
 
-### G — Count  · AFFECTED
+### G — Count  · FIXED
 
 `Count` (`finisher_api.go:228`) builds with the caller's full query —
 `ORDER BY` survives → PostgreSQL rejects it ("must appear in GROUP BY",
@@ -145,7 +148,7 @@ go vet -tags=audit ./...                   # audit build compiles clean
 so counts over joined relations include deleted rows (same root cause as H,
 #6005).
 
-### H — Soft delete  · AFFECTED (severe)
+### H — Soft delete  · FIXED (was severe)
 
 * **Global-delete guard bypassed**: `deleteRows`
   (`callbacks_default.go:448-449`) runs `rewriteSoftDelete` **before**
@@ -165,7 +168,7 @@ so counts over joined relations include deleted rows (same root cause as H,
   **Evidence**: `TestAuditRelationJoinOmitsSoftDeleted`.
 * **SAFE/by-design**: combined `UpdatedAt`+`DeletedAt` column behavior (#7385).
 
-### I — Save / encoding  · AFFECTED (low)
+### I — Save / encoding  · FIXED (low)
 
 * **`Save(slice with PKs)` fails**: non-zero primary keys route to
   `Updates(&slice)` (`finisher_api.go:23-44`), and `assignmentsFrom` rejects
@@ -176,7 +179,7 @@ so counts over joined relations include deleted rows (same root cause as H,
   values go through `reflect` conversion, no sign-flip wrap (#7835);
   timestamps are set per value.
 
-### J — OnConflict / upsert  · AFFECTED (low)
+### J — OnConflict / upsert  · FIXED (low)
 
 `OnConflict.Build` itself is correct (`clause/write.go:95-128`, golden-tested).
 But an empty `Columns` with `UpdateColumns` set renders the invalid
@@ -184,7 +187,7 @@ But an empty `Columns` with `UpdateColumns` set renders the invalid
 **Evidence**: `TestAuditOnConflictRendersNoEmptyTarget`.
 `UpdateAll` as a first-class option (GORM #7527) is an API feature gap.
 
-### K — Associations & M2M  · AFFECTED
+### K — Associations & M2M  · FIXED
 
 * **Duplicate child on re-save**: the has-many branch of `linkOne` calls
   `createRecord` unconditionally (`association.go:173`), and `createRecord`
@@ -209,7 +212,7 @@ propagates to relation queries, all keys go into a single `IN` (known 65k
 parameter / SQLite variable limit, #6849 — documented limitation). FK-override
 APIs don't exist (#6750 N/A).
 
-### M — AutoMigrate  · AFFECTED
+### M — AutoMigrate  · FIXED
 
 * **Global index-name collision**: `createIndexes`
   (`migrator/migrator.go:224-249`) issues `CREATE INDEX IF NOT EXISTS <name>`;
@@ -266,15 +269,18 @@ caveat).
 | `ParameterizedQueries`, `QueryFields`, `SetColumn`, `ReorderModels`, `ScanRows` | API absent by design |
 | Feature requests (mocks, `WhereIf`, index options, hooks registry, …) | backlog, not defects — folded into the v0.2 spec discussion |
 
-## Fix-phase priorities (input to the v0.2 spec)
+## Fix-phase results (shipped on `audit-fixes`, `9f5c590..bfc94d0`)
 
 * **P0 (data loss / resource leaks)**: H (global-delete guard + OR
-  precedence + join filter), A (finalizer pass + panic recovery).
+  precedence + join filter), A (finalizer pass + panic recovery). ✅
 * **P1 (correctness)**: F (`clause.Or`, map ordering), K (idempotent
   associations, junction migration), M (index-name scoping), I (`Save` slice),
-  G (Count strips ORDER BY).
-* **P2 (robustness)**: B (stmt-cache refcount + Ping forwarding), C (`Row`
-  nil), E (scope-error propagation), J (empty `ON CONFLICT` target).
+  G (Count strips ORDER BY). ✅
+* **P2 (robustness)**: B (stmt-cache refcount + Ping forwarding + DDL
+  invalidation), C (`Row` nil), E (scope-error propagation), J (empty
+  `ON CONFLICT` target). ✅
 
-Each fix lands with its audit-tag test flipped to the default suite (removed
-from `audit_repro_test.go` or de-tagged) — see `docs/AUDIT_PLAN.md`.
+Every fix landed with its audit-tag test promoted to the default suite
+(`audit_fixes_test.go`); `audit_repro_test.go` is gone. Design decisions and
+known limitations are recorded in
+[`superpowers/specs/2026-11-21-audit-fixes-design.md`](superpowers/specs/2026-11-21-audit-fixes-design.md).
