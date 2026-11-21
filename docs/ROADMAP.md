@@ -75,6 +75,8 @@ Phases below are the milestone detail with acceptance criteria.
 - modernc.org/sqlite edge cases: multiple statements per exec, busy_timeout handling.
 - ~~Decide `Scopes` vs `Apply` naming before Phase 3 lands (PRD open question).~~ **Resolved:** keep `Scopes`.
 - Consider `unsafe` zero-copy helpers only if benchmarks demand them (deferred).
+- Follow-up (from the base-models review): move SQL type-name strings (`uuid`, `TEXT`, `TIMESTAMP`, …) out of `migrator/` into a `Dialector` type-mapping hook, reconciling the existing `sqlType` switch with the ARCHITECTURE rule that dialect-specific strings live in `dialect/`.
+- Run the env-gated PG suite (`FUSION_TEST_PG_DSN`) in CI, covering the new `TestPostgresUUIDModelNativeType`.
 
 ## Recommended sequencing
 
