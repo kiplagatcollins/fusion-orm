@@ -302,8 +302,17 @@ func applyScopes(db *DB) {
 			continue
 		}
 		next := fn(db)
-		if next != nil && next != db {
+		if next == nil {
+			continue
+		}
+		if next != db {
 			db.Statement = next.Statement
+			// Scopes run on their own instance; carry their error back so
+			// it reaches the finisher chain instead of being dropped
+			// (GORM #6283 class). First error wins.
+			if next.Error != nil && db.Error == nil {
+				db.Error = next.Error
+			}
 		}
 	}
 }

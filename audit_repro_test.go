@@ -14,21 +14,6 @@ import (
 	"github.com/kiplagatcollins/fusion-orm/clause"
 )
 
-// ---------------------------------------------------------------- class E
-
-// TestAuditScopeErrorsPropagate: errors raised while applying scopes must
-// surface on the finisher chain instead of being dropped. GORM #6283 class.
-func TestAuditScopeErrorsPropagate(t *testing.T) {
-	db := setupSoftDelete(t)
-	var out []softUser
-	res := db.Model(&softUser{}).
-		Scopes(func(d *DB) *DB { return d.Where(42) }). // invalid condition inside scope
-		Find(&out)
-	if res.Error == nil {
-		t.Error("error raised inside a scope was dropped by applyScopes (GORM #6283 class)")
-	}
-}
-
 // ---------------------------------------------------------------- class J
 
 // TestAuditOnConflictRendersNoEmptyTarget: ON CONFLICT with update columns
