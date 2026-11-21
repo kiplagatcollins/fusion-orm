@@ -2,6 +2,7 @@ package schema
 
 import (
 	"database/sql"
+	"fmt"
 	"reflect"
 	"strings"
 
@@ -250,9 +251,13 @@ func newField(typ reflect.Type, sf reflect.StructField, tag Tag, dbName string, 
 		field.PKGenerator = func(v reflect.Value) error {
 			id, err := uuid.NewV7()
 			if err != nil {
-				return err
+				return fmt.Errorf("generate uuid pk %s: %w", field.DBName, err)
 			}
-			v.Set(reflect.ValueOf(id))
+			if field.IsPtr {
+				v.Set(reflect.ValueOf(&id))
+			} else {
+				v.Set(reflect.ValueOf(id))
+			}
 			return nil
 		}
 	}

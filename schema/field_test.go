@@ -193,3 +193,25 @@ func TestPKGeneratorNotSetForAutoincrement(t *testing.T) {
 		t.Error("PKGenerator set on autoincrement pk")
 	}
 }
+
+func TestPKGeneratorPointerUUIDField(t *testing.T) {
+	type ptrPK struct {
+		ID *uuid.UUID `fusion:"pk,type:uuid"`
+	}
+	table, err := NewTables(nil, false, nil).Parse(&ptrPK{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := table.Field("ID")
+	if field.PKGenerator == nil {
+		t.Fatal("PKGenerator not resolved for pointer uuid pk")
+	}
+	v := reflect.New(reflect.TypeFor[*uuid.UUID]()).Elem()
+	if err := field.PKGenerator(v); err != nil {
+		t.Fatalf("PKGenerator: %v", err)
+	}
+	id := v.Interface().(*uuid.UUID)
+	if id == nil || (*id)[6]>>4 != 7 {
+		t.Fatalf("id not uuidv7: %v", id)
+	}
+}
