@@ -310,3 +310,18 @@ func TestAuditHasManyResaveNoDuplicate(t *testing.T) {
 		t.Errorf("child rows with title 'seed' = %d, want 1 (no duplicate; GORM #6119)", n)
 	}
 }
+
+// TestAuditM2MAppendIdempotent: re-appending an existing relation must not
+// insert a duplicate junction row. GORM #5579/#7365 class.
+func TestAuditM2MAppendIdempotent(t *testing.T) {
+	db, _ := setupRelations(t) // user 1 already linked to tags 1 and 3
+	u := &relUser{}
+	u.ID = 1
+	if err := db.Model(u).Association("Tags").Append(&relTag{ID: 1}); err != nil {
+		t.Fatalf("Append existing tag: %v", err)
+	}
+	n := scalarCount(t, db, `SELECT COUNT(*) FROM user_tags WHERE rel_user_id = 1 AND rel_tag_id = 1`)
+	if n != 1 {
+		t.Errorf("junction rows for (1,1) = %d, want 1 (idempotent append; GORM #5579)", n)
+	}
+}

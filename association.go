@@ -3,6 +3,7 @@ package fusion
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/kiplagatcollins/fusion-orm/clause"
 	"github.com/kiplagatcollins/fusion-orm/schema"
@@ -226,6 +227,15 @@ func (a *Association) createRecord(value any, table *schema.Table) error {
 
 func (a *Association) insertJoinRow(sourceKey, childKey any) error {
 	spec := a.db.m2mSpec(a.rel)
+	// Re-appending an existing pair must not duplicate the junction row
+	// (GORM #5579/#7365 class): check first, insert only when missing.
+	linked, err := a.junctionLinked(spec, sourceKey, childKey)
+	if err != nil {
+		return err
+	}
+	if linked {
+		return nil
+	}
 	tx := a.db.Session(&Session{NewDB: true}).getInstance()
 	tx.Statement.Table = spec.table
 	tx.Statement.AddClause(clause.Insert{Table: spec.table, Columns: []string{spec.fkCol, spec.refCol}})
@@ -233,6 +243,31 @@ func (a *Association) insertJoinRow(sourceKey, childKey any) error {
 	tx.Statement.BuildClauses()
 	res := tx.Exec(string(tx.Statement.SQL), tx.Statement.Vars...)
 	return res.Error
+}
+
+// junctionLinked reports whether the (source, child) pair already exists on
+// the junction table. The query is built with the dialect's bind vars so it
+// runs on SQLite and PostgreSQL alike.
+func (a *Association) junctionLinked(spec joinSpec, sourceKey, childKey any) (bool, error) {
+	var sql strings.Builder
+	sql.WriteString("SELECT COUNT(*) FROM ")
+	sql.WriteString(a.db.Statement.QuoteTo(spec.table))
+	sql.WriteString(" WHERE ")
+	sql.WriteString(a.db.Statement.QuoteTo(spec.fkCol))
+	sql.WriteString(" = ")
+	sql.Write(a.db.Dialector.BindVarTo(nil, 1))
+	sql.WriteString(" AND ")
+	sql.WriteString(a.db.Statement.QuoteTo(spec.refCol))
+	sql.WriteString(" = ")
+	sql.Write(a.db.Dialector.BindVarTo(nil, 2))
+
+	row := a.db.Statement.ConnPool.QueryRowContext(
+		statementContext(a.db.Statement), sql.String(), sourceKey, childKey)
+	var n int64
+	if err := row.Scan(&n); err != nil {
+		return false, fmt.Errorf("check join table %s: %w", spec.table, err)
+	}
+	return n > 0, nil
 }
 
 // Replace removes existing relations and appends the given values.
