@@ -100,3 +100,111 @@ func TestCreateBatchUniqueUUIDs(t *testing.T) {
 		seen[p.ID] = true
 	}
 }
+
+type userWithUUIDModel struct {
+	UUIDModel
+	Email string
+}
+
+func (userWithUUIDModel) TableName() string { return "base_uuid_users" }
+
+type userWithNumericModel struct {
+	Model
+	Email string
+}
+
+func (userWithNumericModel) TableName() string { return "base_users" }
+
+func TestUUIDModelRoundTrip(t *testing.T) {
+	db := setupUUIDModelDB(t)
+	ctx := context.Background()
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(ctx, &userWithUUIDModel{}); err != nil {
+		t.Fatalf("AutoMigrate: %v", err)
+	}
+	user := userWithUUIDModel{Email: "a@example.com"}
+	if err := db.WithContext(ctx).Create(&user).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if user.ID == (uuid.UUID{}) || user.ID[6]>>4 != 7 {
+		t.Fatalf("id not uuidv7: %v", user.ID)
+	}
+	if user.CreatedAt.IsZero() || user.UpdatedAt.IsZero() {
+		t.Error("timestamps not set")
+	}
+	if user.DeletedAt.Valid {
+		t.Error("DeletedAt should start NULL")
+	}
+	var found userWithUUIDModel
+	if err := db.WithContext(ctx).First(&found, "id = ?", user.ID).Error; err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if found.Email != "a@example.com" {
+		t.Errorf("email round trip = %q", found.Email)
+	}
+}
+
+func TestUUIDModelSoftDeleteLifecycle(t *testing.T) {
+	db := setupUUIDModelDB(t)
+	ctx := context.Background()
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(ctx, &userWithUUIDModel{}); err != nil {
+		t.Fatal(err)
+	}
+	user := userWithUUIDModel{Email: "del@example.com"}
+	if err := db.WithContext(ctx).Create(&user).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.WithContext(ctx).Delete(&user).Error; err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	var count int64
+	if err := db.WithContext(ctx).Model(&userWithUUIDModel{}).Count(&count).Error; err != nil || count != 0 {
+		t.Errorf("soft-deleted row visible: %d, %v", count, err)
+	}
+	var hidden userWithUUIDModel
+	if err := db.WithContext(ctx).Unscoped().First(&hidden, "id = ?", user.ID).Error; err != nil {
+		t.Fatalf("unscoped first: %v", err)
+	}
+	if !hidden.DeletedAt.Valid {
+		t.Error("deleted_at not set in DB after soft delete")
+	}
+	if err := db.WithContext(ctx).Unscoped().Model(&userWithUUIDModel{}).Count(&count).Error; err != nil || count != 1 {
+		t.Errorf("unscoped count = %d, %v", count, err)
+	}
+}
+
+func TestNumericModelBackfill(t *testing.T) {
+	db := setupUUIDModelDB(t)
+	ctx := context.Background()
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(ctx, &userWithNumericModel{}); err != nil {
+		t.Fatal(err)
+	}
+	user := userWithNumericModel{Email: "n@example.com"}
+	if err := db.WithContext(ctx).Create(&user).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if user.ID == 0 {
+		t.Fatal("numeric id not backfilled")
+	}
+	if user.CreatedAt.IsZero() || user.UpdatedAt.IsZero() {
+		t.Error("timestamps not set")
+	}
+	var found userWithNumericModel
+	if err := db.WithContext(ctx).First(&found, "id = ?", user.ID).Error; err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	if found.Email != "n@example.com" {
+		t.Errorf("email round trip = %q", found.Email)
+	}
+}
