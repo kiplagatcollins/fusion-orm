@@ -20,6 +20,10 @@ func (db *DB) Create(value any) *DB {
 }
 
 // Save inserts value when its primary key is zero and updates it otherwise.
+// For a slice each element is handled on its own — rows with a primary key
+// are updated by that key, rows without one are inserted — because routing
+// the whole slice to Updates would fail with "Updates expects a map or
+// struct" (GORM #7540).
 func (db *DB) Save(value any) *DB {
 	table, err := db.resolveTable(value)
 	if err != nil {
@@ -33,11 +37,43 @@ func (db *DB) Save(value any) *DB {
 		tx.AddError(err)
 		return tx
 	}
-	for _, v := range values {
-		if pk := primaryField(table); pk != nil {
-			if fv := fieldAt(v, pk.Index); fv.IsValid() && !pk.IsZero(fv) {
-				return db.Where(pk.DBName+" = ?", fv.Interface()).Updates(value)
+	pk := primaryField(table)
+
+	isSlice := false
+	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Pointer {
+		rv = rv.Elem()
+		isSlice = rv.Kind() == reflect.Slice
+	} else {
+		isSlice = reflect.TypeOf(value).Kind() == reflect.Slice
+	}
+
+	if isSlice {
+		rv := reflect.ValueOf(value)
+		if rv.Kind() == reflect.Pointer {
+			rv = rv.Elem()
+		}
+		tx := db.getInstance()
+		for i := range values {
+			elem := rv.Index(i).Interface()
+			if pk != nil {
+				if fv := fieldAt(values[i], pk.Index); fv.IsValid() && !pk.IsZero(fv) {
+					res := db.Where(pk.DBName+" = ?", fv.Interface()).Updates(elem)
+					if res.Error != nil {
+						return res
+					}
+					continue
+				}
 			}
+			if res := db.Create(elem); res.Error != nil {
+				return res
+			}
+		}
+		return tx
+	}
+
+	if pk != nil && len(values) == 1 {
+		if fv := fieldAt(values[0], pk.Index); fv.IsValid() && !pk.IsZero(fv) {
+			return db.Where(pk.DBName+" = ?", fv.Interface()).Updates(value)
 		}
 	}
 	return db.Create(value)

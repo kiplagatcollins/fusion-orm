@@ -253,3 +253,40 @@ func TestAuditCountStripsOrderBy(t *testing.T) {
 		t.Errorf("Count kept ORDER BY (invalid on PG): %s", sql)
 	}
 }
+
+// ---------------------------------------------------------------- class I
+
+type auditSaveUser struct {
+	ID   int64 `fusion:"pk,autoincrement"`
+	Name string
+}
+
+// TestAuditSaveSliceWithPKs: Save over a slice of persisted models must
+// update every row, not fail on the slice type. GORM #7540 class.
+func TestAuditSaveSliceWithPKs(t *testing.T) {
+	db := openTestDB(t)
+	if err := db.Exec(`CREATE TABLE audit_save_users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&[]auditSaveUser{{Name: "a"}, {Name: "b"}}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var all []auditSaveUser
+	if err := db.Find(&all).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("rows = %d, want 2", len(all))
+	}
+	all[0].Name = "a2"
+	if err := db.Save(&all).Error; err != nil {
+		t.Errorf("Save(slice with PKs) = %v (GORM #7540 class)", err)
+	}
+	var name string
+	if err := db.Model(&auditSaveUser{}).Where("id = ?", all[0].ID).Pluck("name", &name).Error; err != nil {
+		t.Fatal(err)
+	}
+	if name != "a2" {
+		t.Errorf("name after Save = %q, want %q", name, "a2")
+	}
+}
