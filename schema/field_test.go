@@ -215,3 +215,16 @@ func TestPKGeneratorPointerUUIDField(t *testing.T) {
 		t.Fatalf("id not uuidv7: %v", id)
 	}
 }
+
+func TestPKGeneratorNotSetForNonPK(t *testing.T) {
+	type nonPK struct {
+		Ref uuid.UUID
+	}
+	table, err := NewTables(nil, false, nil).Parse(&nonPK{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if field := table.Field("Ref"); field.PKGenerator != nil {
+		t.Error("PKGenerator set on non-pk uuid column")
+	}
+}
