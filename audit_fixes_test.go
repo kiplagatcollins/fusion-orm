@@ -365,3 +365,41 @@ func TestAuditAutoMigrateCreatesM2MJunction(t *testing.T) {
 		t.Errorf("junction table %q not created by AutoMigrate", rel.M2MName)
 	}
 }
+
+// ---------------------------------------------------------------- class M
+
+type idxModelA struct {
+	ID    int64  `fusion:"pk,autoincrement"`
+	Email string `fusion:"index:email_idx"`
+}
+
+type idxModelB struct {
+	ID    int64  `fusion:"pk,autoincrement"`
+	Email string `fusion:"index:email_idx"`
+}
+
+// TestAuditIndexNameScopedPerTable: an explicit index name shared by two
+// tables must produce a usable index on each table; the second table must
+// not silently lose its index to CREATE INDEX IF NOT EXISTS. GORM #7346/#7894 class.
+func TestAuditIndexNameScopedPerTable(t *testing.T) {
+	db := openTestDB(t)
+	m, err := db.Migrator()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.AutoMigrate(t.Context(), &idxModelA{}, &idxModelB{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, model := range []any{&idxModelA{}, &idxModelB{}} {
+		table, err := db.Parse(model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := scalarCount(t, db,
+			`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND tbl_name = ? AND sql LIKE '%email%'`,
+			table.Name)
+		if n == 0 {
+			t.Errorf("table %s lost its email index to a global name collision (GORM #7346)", table.Name)
+		}
+	}
+}

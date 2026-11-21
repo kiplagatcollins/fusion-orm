@@ -59,8 +59,14 @@ type Field struct {
 	Readable        bool
 	IndexName       string
 	UniqueName      string
-	OnUpdate        string
-	OnDelete        string
+	// IndexSQLName/UniqueSQLName are the names issued in CREATE INDEX.
+	// Default names are already table-scoped; explicit tag values get the
+	// table appended here because index names share one namespace per
+	// database (GORM #7346 class).
+	IndexSQLName  string
+	UniqueSQLName string
+	OnUpdate      string
+	OnDelete      string
 
 	Appender AppenderFunc
 	Scanner  ScannerFunc
@@ -68,6 +74,17 @@ type Field struct {
 
 	// PKGenerator fills a zero primary-key value at create time. It is resolved only for uuid.UUID (or *uuid.UUID, whose pointer is allocated and set) primary keys without autoincrement.
 	PKGenerator func(reflect.Value) error
+}
+
+// scopedIndexName returns the name issued in CREATE INDEX. Generated names
+// are table-scoped already; an explicit tag value shares the database-wide
+// index namespace, so the table name is appended for uniqueness across
+// tables that legitimately declare the same index name.
+func scopedIndexName(name string, generated bool, tableName string) string {
+	if generated {
+		return name
+	}
+	return name + "_" + tableName
 }
 
 // String returns the Go field name.
@@ -236,12 +253,14 @@ func newField(typ reflect.Type, sf reflect.StructField, tag Tag, dbName string, 
 		if field.IndexName == "" {
 			field.IndexName = namer.IndexName(tableName, dbName)
 		}
+		field.IndexSQLName = scopedIndexName(field.IndexName, name == "", tableName)
 	}
 	if name, ok := tag.Lookup("unique"); ok {
 		field.UniqueName = name
 		if field.UniqueName == "" {
 			field.UniqueName = namer.UniqueName(tableName, dbName)
 		}
+		field.UniqueSQLName = scopedIndexName(field.UniqueName, name == "", tableName)
 	}
 	if constraint, ok := tag.Lookup("constraint"); ok {
 		field.OnUpdate, field.OnDelete = parseConstraint(constraint)

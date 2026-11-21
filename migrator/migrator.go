@@ -227,7 +227,7 @@ func (m *Migrator) createIndexes(ctx context.Context, table *schema.Table) error
 			name   string
 			unique bool
 		}{
-			{field.IndexName, false}, {field.UniqueName, true},
+			{field.IndexSQLName, false}, {field.UniqueSQLName, true},
 		} {
 			if spec.name == "" {
 				continue
