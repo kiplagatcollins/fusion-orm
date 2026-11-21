@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/kiplagatcollins/fusion-orm/dialect"
 )
 
@@ -24,6 +25,8 @@ const (
 )
 
 var scannerMarker = reflect.TypeFor[sql.Scanner]()
+
+var uuidType = reflect.TypeFor[uuid.UUID]()
 
 // Field is the parsed metadata for one model field. Appender, Scanner and
 // IsZero are closures compiled once during table init.
@@ -61,6 +64,10 @@ type Field struct {
 	Appender AppenderFunc
 	Scanner  ScannerFunc
 	IsZero   IsZeroFunc
+
+	// PKGenerator fills a zero primary-key value at create time. It is
+	// resolved only for uuid.UUID primary keys without autoincrement.
+	PKGenerator func(reflect.Value) error
 }
 
 // String returns the Go field name.
@@ -238,6 +245,16 @@ func newField(typ reflect.Type, sf reflect.StructField, tag Tag, dbName string, 
 	}
 	if constraint, ok := tag.Lookup("constraint"); ok {
 		field.OnUpdate, field.OnDelete = parseConstraint(constraint)
+	}
+	if field.PrimaryKey && !field.AutoIncrement && indirect == uuidType {
+		field.PKGenerator = func(v reflect.Value) error {
+			id, err := uuid.NewV7()
+			if err != nil {
+				return err
+			}
+			v.Set(reflect.ValueOf(id))
+			return nil
+		}
 	}
 	return field
 }

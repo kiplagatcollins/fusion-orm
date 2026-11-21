@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/kiplagatcollins/fusion-orm/dialect/sqlite"
 	_ "modernc.org/sqlite"
 )
@@ -146,5 +147,49 @@ func TestIsZeroClosures(t *testing.T) {
 		if got := fn(reflect.ValueOf(tt.v)); got != tt.want {
 			t.Errorf("IsZero(%s) = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+type uuidPKModel struct {
+	ID   uuid.UUID `fusion:"pk,type:uuid"`
+	Name string
+}
+
+func TestPKGeneratorGeneratesUUIDv7(t *testing.T) {
+	table, err := NewTables(nil, false, nil).Parse(&uuidPKModel{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	field := table.Field("ID")
+	if field.PKGenerator == nil {
+		t.Fatal("PKGenerator not resolved for uuid pk")
+	}
+	v := reflect.New(reflect.TypeFor[uuid.UUID]()).Elem()
+	if err := field.PKGenerator(v); err != nil {
+		t.Fatalf("PKGenerator: %v", err)
+	}
+	id := v.Interface().(uuid.UUID)
+	if id == (uuid.UUID{}) {
+		t.Fatal("id still zero")
+	}
+	if id[6]>>4 != 7 {
+		t.Errorf("version nibble = %d, want 7", id[6]>>4)
+	}
+	if id[8]>>6 != 2 {
+		t.Errorf("variant nibble = %d, want 2 (RFC 9562)", id[8]>>6)
+	}
+}
+
+func TestPKGeneratorNotSetForAutoincrement(t *testing.T) {
+	type autoPK struct {
+		ID   uint64 `fusion:"pk,autoincrement"`
+		Name string
+	}
+	table, err := NewTables(nil, false, nil).Parse(&autoPK{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if field := table.Field("ID"); field.PKGenerator != nil {
+		t.Error("PKGenerator set on autoincrement pk")
 	}
 }
