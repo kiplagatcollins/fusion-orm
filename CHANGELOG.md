@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- gorm-parity base models: `fusion.Model` (autoincrement `uint64` ID) and
+  `fusion.UUIDModel` (UUIDv7 ID generated at create time), both with
+  `CreatedAt`/`UpdatedAt` and soft-delete `DeletedAt`.
+- `type:uuid` column type: native `uuid` on PostgreSQL, `TEXT` on SQLite.
+
 ## [0.1.1] - 2026-11-21
 
 ### Fixed
