@@ -93,18 +93,19 @@ func softValue(field *schema.Field, raw string) any {
 	return raw
 }
 
-func softDeleteCondition(db *DB, field *schema.Field) clause.Expression {
-	column := db.Statement.QuoteTo(field.DBName)
+// softDeleteCondition builds the live-row predicate for field against the
+// given column SQL (a bare quoted column, or an alias-qualified one).
+func softDeleteCondition(db *DB, field *schema.Field, columnSQL string) clause.Expression {
 	if field.SoftDeleteZero != "" {
-		return clause.Expr(column+" = ?", softValue(field, field.SoftDeleteZero))
+		return clause.Expr(columnSQL+" = ?", softValue(field, field.SoftDeleteZero))
 	}
 	if field.IsPtr || field.IndirectType.Kind() == reflect.Struct {
-		return clause.Expr(column + " IS NULL")
+		return clause.Expr(columnSQL + " IS NULL")
 	}
 	if field.IndirectType == reflect.TypeFor[time.Time]() {
-		return clause.Expr(column+" = ?", time.Time{})
+		return clause.Expr(columnSQL+" = ?", time.Time{})
 	}
-	return clause.Expr(column + " IS NULL")
+	return clause.Expr(columnSQL + " IS NULL")
 }
 
 func softDeleteValue(db *DB, field *schema.Field) any {
@@ -132,7 +133,7 @@ func injectSoftDeleteFilter(db *DB, table *schema.Table) {
 	if field == nil {
 		return
 	}
-	condition := softDeleteCondition(db, field)
+	condition := softDeleteCondition(db, field, db.Statement.QuoteTo(field.DBName))
 	where, _ := db.Statement.Clause("where").(clause.Where)
 	if condHasSQL(where.Conds, condition.SQL) {
 		return

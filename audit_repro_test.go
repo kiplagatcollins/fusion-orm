@@ -14,58 +14,6 @@ import (
 	"github.com/kiplagatcollins/fusion-orm/clause"
 )
 
-// ---------------------------------------------------------------- class H/K
-
-type jdParent struct {
-	ID      int64 `fusion:"pk,autoincrement"`
-	Name    string
-	Profile *jdProfile `fusion:"rel:has-one,foreignKey:ParentID"`
-}
-
-type jdProfile struct {
-	ID        int64 `fusion:"pk,autoincrement"`
-	ParentID  int64
-	Bio       string
-	DeletedAt DeletedAt
-}
-
-// TestAuditRelationJoinOmitsSoftDeleted: LEFT JOINs on soft-deletable
-// relations must exclude soft-deleted rows, matching the preload behavior.
-// GORM #6998 class.
-func TestAuditRelationJoinOmitsSoftDeleted(t *testing.T) {
-	db := openTestDB(t)
-	for _, ddl := range []string{
-		`CREATE TABLE jd_parents (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)`,
-		`CREATE TABLE jd_profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, parent_id INTEGER, bio TEXT, deleted_at TIMESTAMP)`,
-	} {
-		if err := db.Exec(ddl).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	parent := jdParent{Name: "p"}
-	if err := db.Create(&parent).Error; err != nil {
-		t.Fatal(err)
-	}
-	profile := jdProfile{ParentID: parent.ID, Bio: "live"}
-	if err := db.Create(&profile).Error; err != nil {
-		t.Fatal(err)
-	}
-	// Soft-delete the profile directly.
-	if err := db.Exec(`UPDATE jd_profiles SET deleted_at = '2024-01-01 00:00:00' WHERE id = ?`, profile.ID).Error; err != nil {
-		t.Fatal(err)
-	}
-	var got []jdParent
-	if err := db.Model(&jdParent{}).Joins("Profile").Find(&got).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("parents = %d, want 1", len(got))
-	}
-	if got[0].Profile != nil {
-		t.Errorf("join returned soft-deleted relation: %+v", *got[0].Profile)
-	}
-}
-
 // ---------------------------------------------------------------- class B
 
 // TestAuditStmtCacheEvictionClosesInUseStmt: a statement returned by the

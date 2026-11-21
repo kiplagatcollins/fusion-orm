@@ -91,8 +91,17 @@ func applyJoins(db *DB, table *schema.Table) error {
 		on := clause.Expr(fmt.Sprintf("%s.%s = %s.%s",
 			db.Statement.QuoteTo(root), sourceColumn,
 			db.Statement.QuoteTo(alias), targetColumn))
+		// Inline joins must filter soft-deleted relation rows the same way
+		// preload does, otherwise a deleted profile still loads (GORM #6998).
+		onExprs := []clause.Expression{on}
+		if !isUnscoped(db) {
+			if soft := softDeleteField(rel.JoinTable); soft != nil {
+				qualified := db.Statement.QuoteTo(alias) + "." + db.Statement.QuoteTo(soft.DBName)
+				onExprs = append(onExprs, softDeleteCondition(db, soft, qualified))
+			}
+		}
 		items.Items = append(items.Items, clause.Join{
-			Type: "LEFT", Table: rel.JoinTable.Name, Alias: alias, On: []clause.Expression{on},
+			Type: "LEFT", Table: rel.JoinTable.Name, Alias: alias, On: onExprs,
 		})
 	}
 	if len(items.Items) > 0 {
