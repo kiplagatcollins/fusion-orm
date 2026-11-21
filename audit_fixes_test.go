@@ -454,12 +454,13 @@ func TestAuditPreparedPoolForwardsPing(t *testing.T) {
 // *sql.Row panics in the caller's Scan. GORM #7575 class.
 func TestAuditRowNeverNil(t *testing.T) {
 	db := openTestDB(t)
-	row := db.Model(42).Row() // invalid model: build fails
+	m := db.Model(42) // invalid model: build fails
+	row := m.Row()
 	if row == nil {
 		t.Fatal("Row() returned nil on build error; caller Scan panics (GORM #7575)")
 	}
-	if db.Error == nil {
-		t.Error("build error must stay on db.Error")
+	if m.Error == nil {
+		t.Error("build error must surface on the chain node (m.Error)")
 	}
 	var v any
 	if err := row.Scan(&v); err == nil {

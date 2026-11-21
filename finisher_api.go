@@ -295,8 +295,10 @@ func (db *DB) Row() *sql.Row {
 	if tx.Error != nil {
 		// A *sql.Row cannot carry a custom error, so return a row whose
 		// Scan fails with a deterministic sentinel instead of nil — a nil
-		// *sql.Row panics in the caller's Scan (GORM #7575 class). The
-		// build error itself remains on db.Error.
+		// *sql.Row panics in the caller's Scan (GORM #7575 class). Row()
+		// has no *DB result of its own, so the build error is surfaced on
+		// the receiver: m := db.Model(x); row := m.Row(); m.Error.
+		db.Error = tx.Error
 		return tx.Statement.ConnPool.QueryRowContext(statementContext(tx.Statement), rowBuildErrorSQL)
 	}
 	return tx.queryRowContext(statementContext(tx.Statement), string(tx.Statement.SQL), tx.Statement.Vars...)
