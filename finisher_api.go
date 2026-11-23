@@ -135,6 +135,9 @@ func (db *DB) firstWithOrder(dest any, direction string, conds ...any) *DB {
 	return tx
 }
 
+// applyConds appends finisher conditions to the instance in place — the
+// finisher already materialized its own copy, so Where's clone would be
+// pure churn.
 func applyConds(db *DB, conds ...any) *DB {
 	table, err := db.modelTable()
 	if err != nil {
@@ -142,24 +145,26 @@ func applyConds(db *DB, conds ...any) *DB {
 	}
 	if len(conds) > 0 {
 		if query, ok := conds[0].(string); ok && strings.Contains(query, "?") {
-			return db.Where(query, conds[1:]...)
+			db.addConditionTo(query, conds[1:], false)
+			return db
 		}
 	}
+	pk := primaryField(table)
 	for _, cond := range conds {
 		switch v := cond.(type) {
 		case string:
-			db = db.Where(v)
+			db.addConditionTo(v, nil, false)
 		case int:
-			if pk := primaryField(table); pk != nil {
-				db = db.Where(pk.DBName+" = ?", int64(v))
+			if pk != nil {
+				db.addConditionTo(pk.DBName+" = ?", []any{int64(v)}, false)
 			}
 		case int64:
-			if pk := primaryField(table); pk != nil {
-				db = db.Where(pk.DBName+" = ?", v)
+			if pk != nil {
+				db.addConditionTo(pk.DBName+" = ?", []any{v}, false)
 			}
 		default:
 			if cond != nil {
-				db = db.Where(cond)
+				db.addConditionTo(cond, nil, false)
 			}
 		}
 	}
@@ -203,7 +208,7 @@ func (db *DB) UpdateColumn(column string, value any) *DB {
 func (db *DB) UpdateColumns(values any) *DB {
 	tx := db.getInstance()
 	tx.Statement.SkipHooks = true
-	tx.Statement.Set("fusion:skip_timestamps", true)
+	tx.Statement.SkipTimestamps = true
 	return tx.Updates(values)
 }
 
@@ -218,9 +223,15 @@ func assignmentsFrom(db *DB, table *schema.Table, values any) []clause.Assignmen
 	var out []clause.Assignment
 	switch rv.Kind() {
 	case reflect.Map:
+		out = make([]clause.Assignment, 0, rv.Len())
 		iter := rv.MapRange()
 		for iter.Next() {
-			key := fmt.Sprint(iter.Key().Interface())
+			key := ""
+			if k := iter.Key(); k.Kind() == reflect.String {
+				key = k.String() // typed read: no interface boxing, no fmt
+			} else {
+				key = fmt.Sprint(k.Interface())
+			}
 			field := table.Column(key)
 			if field == nil {
 				field = table.Field(key)
@@ -261,10 +272,14 @@ func (db *DB) Delete(value any, conds ...any) *DB {
 }
 
 // Count stores the number of matching rows in count.
+// countColumns is shared by every Count call: Select.Build only reads it,
+// and Statement/clone never append into Columns.
+var countColumns = []string{"COUNT(*)"}
+
 func (db *DB) Count(count *int64) *DB {
 	tx := db.getInstance()
 	tx.Statement.Dest = count
-	tx.Statement.AddClause(clause.Select{Columns: []string{"COUNT(*)"}})
+	tx.Statement.AddClause(clause.Select{Columns: countColumns})
 	// ORDER BY is invalid next to COUNT(*) on PostgreSQL (the ordering
 	// column must appear in GROUP BY); drop whatever the caller or a scope
 	// provided. GROUP BY/HAVING are left intact. GORM #7516.

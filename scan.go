@@ -113,6 +113,25 @@ func newScanBuffers(n int) *scanBuffers {
 	return buf
 }
 
+// appendOne extends an addressable slice by one element and returns the new
+// slot. reflect.Append + Set heap-allocates a slice header on every call
+// (grow's local header escapes), so one call per row becomes one allocation
+// per row; this grows amortized (doubling) and updates the length in place.
+func appendOne(slice reflect.Value) reflect.Value {
+	n := slice.Len()
+	if n == slice.Cap() {
+		newCap := 8
+		if c := slice.Cap(); c > 0 {
+			newCap = c * 2
+		}
+		grown := reflect.MakeSlice(slice.Type(), n, newCap)
+		reflect.Copy(grown, slice)
+		slice.Set(grown)
+	}
+	slice.SetLen(n + 1)
+	return slice.Index(n)
+}
+
 func scanSlice(rows *sql.Rows, slice reflect.Value, table *schema.Table, columns []string) (int, error) {
 	elemType := slice.Type().Elem()
 	if elemType.Kind() != reflect.Struct && !(elemType.Kind() == reflect.Pointer && elemType.Elem().Kind() == reflect.Struct) {
@@ -127,12 +146,10 @@ func scanSlice(rows *sql.Rows, slice reflect.Value, table *schema.Table, columns
 			if err := scanOne(rows, elem, plan, buf); err != nil {
 				return count, err
 			}
-			slice.Set(reflect.Append(slice, elem))
+			appendOne(slice).Set(elem)
 		} else {
-			// Append a zero element and scan into the slice slot directly:
-			// no per-row reflect.New and no copy from a temporary.
-			slice.Set(reflect.Append(slice, reflect.Zero(elemType)))
-			if err := scanOne(rows, slice.Index(slice.Len()-1), plan, buf); err != nil {
+			// Scan straight into the new slot: no temporary struct, no copy.
+			if err := scanOne(rows, appendOne(slice), plan, buf); err != nil {
 				return count, err
 			}
 		}
@@ -215,10 +232,9 @@ func scanScalar(rows *sql.Rows, value reflect.Value) (int, error) {
 func scanScalarSlice(rows *sql.Rows, slice reflect.Value, elemType reflect.Type) (int, error) {
 	count := 0
 	for rows.Next() {
-		// Append a zero element and scan into the slice slot: the pointer
-		// into the slice costs one interface boxing, not a fresh element.
-		slice.Set(reflect.Append(slice, reflect.Zero(elemType)))
-		dest := slice.Index(slice.Len() - 1).Addr().Interface()
+		// Scan through a pointer into the new slot: one interface boxing of
+		// an existing address, no per-row element allocation.
+		dest := appendOne(slice).Addr().Interface()
 		if err := rows.Scan(dest); err != nil {
 			return count, fmt.Errorf("scan scalar: %w", err)
 		}

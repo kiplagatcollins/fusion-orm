@@ -3,6 +3,7 @@ package fusion
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/schema"
 )
@@ -85,17 +86,24 @@ func modelValues(dest any) ([]reflect.Value, error) {
 }
 
 func setTimestamps(db *DB, value reflect.Value, table *schema.Table, create bool) {
-	now := reflect.ValueOf(db.NowFunc())
+	// Assign through typed pointers: reflect.ValueOf(time.Time) heap-boxes
+	// the value on every call, and this runs per row.
+	var now time.Time
+	fetched := false
 	for _, field := range table.Fields {
-		if field.AutoCreateTime && create {
-			if fv := fieldAt(value, field.Index); fv.IsValid() && fv.CanSet() && fv.Type() == now.Type() {
-				fv.Set(now)
-			}
+		if !(field.AutoCreateTime && create) && !field.AutoUpdateTime {
+			continue
 		}
-		if field.AutoUpdateTime {
-			if fv := fieldAt(value, field.Index); fv.IsValid() && fv.CanSet() && fv.Type() == now.Type() {
-				fv.Set(now)
-			}
+		fv := fieldAt(value, field.Index)
+		if !fv.IsValid() || !fv.CanSet() || fv.Type() != reflect.TypeFor[time.Time]() {
+			continue
+		}
+		if !fetched {
+			now = db.NowFunc()
+			fetched = true
+		}
+		if p, ok := fv.Addr().Interface().(*time.Time); ok {
+			*p = now
 		}
 	}
 }

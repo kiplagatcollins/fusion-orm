@@ -350,11 +350,13 @@ func assignRelation(sources []reflect.Value, rel *schema.Relation, sourceField *
 			if field.Kind() != reflect.Slice {
 				continue
 			}
-			out := reflect.MakeSlice(field.Type(), 0, len(items))
+			// Addressable holder so appendOne can grow amortized in place
+			// instead of reflect.Append's per-child header allocation.
+			out := reflect.New(field.Type()).Elem()
 			for _, item := range items {
 				mounted := mountValue(item, field.Type().Elem())
 				if mounted.IsValid() {
-					out = reflect.Append(out, mounted)
+					appendOne(out).Set(mounted)
 				}
 			}
 			field.Set(out)

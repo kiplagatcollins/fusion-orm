@@ -150,8 +150,18 @@ func (db *DB) Or(query any, args ...any) *DB {
 	return db.addCondition(query, args, true)
 }
 
+// addCondition appends to a fresh chain instance (public Where/Or semantics:
+// the receiver stays reusable).
 func (db *DB) addCondition(query any, args []any, or bool) *DB {
 	tx := db.getInstance()
+	tx.addConditionTo(query, args, or)
+	return tx
+}
+
+// addConditionTo appends a condition to this instance in place. Finishers
+// and applyConds use it on their private instance: cloning again would only
+// churn allocations.
+func (tx *DB) addConditionTo(query any, args []any, or bool) {
 	var exprs []clause.Expression
 	switch v := query.(type) {
 	case string:
@@ -171,16 +181,17 @@ func (db *DB) addCondition(query any, args []any, or bool) *DB {
 		exprs = structConditions(tx, v)
 	}
 	if len(exprs) == 0 {
-		return tx
+		return
 	}
 	cond := clause.Condition{Join: "AND", Exprs: exprs}
 	if or {
 		cond.Join = "OR"
 	}
 	prev, _ := tx.Statement.Clause("where").(clause.Where)
-	conds := append(append([]clause.Condition(nil), prev.Conds...), cond)
+	conds := make([]clause.Condition, len(prev.Conds), len(prev.Conds)+1)
+	copy(conds, prev.Conds)
+	conds = append(conds, cond)
 	tx.Statement.AddClause(clause.Where{Conds: conds})
-	return tx
 }
 
 func quoteIdentifier(db *DB, name string) string {

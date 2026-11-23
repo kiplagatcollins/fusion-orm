@@ -67,6 +67,14 @@ func beginDefaultTx(db *DB) {
 	if _, ok := db.Statement.ConnPool.(*sql.Tx); ok {
 		return
 	}
+	// A single-statement write is atomic by itself; the implicit
+	// transaction would add a Begin/Commit round-trip without extending
+	// atomicity. Multi-statement operations — relations, association
+	// saves, hooks that may issue statements, multi-chunk batches —
+	// still get the transaction.
+	if table, err := db.modelTable(); err == nil && singleStatementWrite(db, table) {
+		return
+	}
 	original := db.Statement.ConnPool
 	tx := db.Begin()
 	if tx.Error != nil {
@@ -76,6 +84,18 @@ func beginDefaultTx(db *DB) {
 	db.Statement.ConnPool = tx.Statement.ConnPool
 	db.Statement.Set("fusion:tx", tx)
 	db.Statement.Set("fusion:tx:pool", original)
+}
+
+func singleStatementWrite(db *DB, table *schema.Table) bool {
+	if len(table.Relations) > 0 || table.Hooks != (schema.Hooks{}) {
+		return false
+	}
+	if batch := db.Statement.CreateBatchSize; batch > 0 {
+		if values, err := modelValues(db.Statement.Dest); err == nil && len(values) > batch {
+			return false
+		}
+	}
+	return true
 }
 
 func commitOrRollback(db *DB) {
@@ -343,14 +363,30 @@ func backfillFromReturning(db *DB, values []reflect.Value, table *schema.Table) 
 	}
 	defer rows.Close()
 	i := 0
-	for rows.Next() && i < len(values) {
-		var id any
-		if err := rows.Scan(&id); err != nil {
-			db.AddError(fmt.Errorf("scan returning id: %w", err))
-			return
+	switch pk.IndirectType.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		// Integer primary keys (the common case) scan straight into a
+		// stack int64: no interface boxing per returned row.
+		var id int64
+		for rows.Next() && i < len(values) {
+			if err := rows.Scan(&id); err != nil {
+				db.AddError(fmt.Errorf("scan returning id: %w", err))
+				return
+			}
+			setPrimaryKeyValue(values[i], pk, reflect.ValueOf(&id).Elem())
+			i++
 		}
-		setPrimaryKeyValue(values[i], table, pk, id)
-		i++
+	default:
+		var id any
+		for rows.Next() && i < len(values) {
+			if err := rows.Scan(&id); err != nil {
+				db.AddError(fmt.Errorf("scan returning id: %w", err))
+				return
+			}
+			setPrimaryKeyValue(values[i], pk, reflect.ValueOf(id))
+			i++
+		}
 	}
 	db.RowsAffected += int64(i)
 }
@@ -367,7 +403,7 @@ func backfillFromLastInsertID(db *DB, values []reflect.Value, table *schema.Tabl
 	// Recover it via the driver result captured by execSQL.
 	if raw, ok := db.Statement.Get("fusion:last_insert_id"); ok {
 		if id, ok := raw.(int64); ok && id != 0 {
-			setPrimaryKeyValue(values[0], table, pk, id)
+			setPrimaryKeyValue(values[0], pk, reflect.ValueOf(&id).Elem())
 		}
 	}
 }
@@ -390,15 +426,19 @@ func applyPKGenerators(table *schema.Table, value reflect.Value) error {
 	return nil
 }
 
-func setPrimaryKeyValue(value reflect.Value, table *schema.Table, pk *schema.Field, id any) {
+func setPrimaryKeyValue(value reflect.Value, pk *schema.Field, src reflect.Value) {
+	if !src.IsValid() {
+		return
+	}
 	fv := fieldAt(value, pk.Index)
 	if !fv.IsValid() || !fv.CanSet() {
 		return
 	}
-	src := reflect.ValueOf(id)
-	if src.Type().AssignableTo(fv.Type()) {
+	st := src.Type()
+	switch {
+	case st.AssignableTo(fv.Type()):
 		fv.Set(src)
-	} else if src.Type().ConvertibleTo(fv.Type()) {
+	case st.ConvertibleTo(fv.Type()):
 		fv.Set(src.Convert(fv.Type()))
 	}
 }
@@ -413,7 +453,9 @@ func guardConditions(db *DB, table *schema.Table) bool {
 	if values, err := modelValues(db.Statement.Dest); err == nil && len(values) == 1 {
 		if exprs := structConditions(db, values[0].Interface()); len(exprs) > 0 {
 			prev, _ := db.Statement.Clause("where").(clause.Where)
-			conds := append(append([]clause.Condition(nil), prev.Conds...), clause.Condition{Join: "AND", Exprs: exprs})
+			conds := make([]clause.Condition, len(prev.Conds), len(prev.Conds)+1)
+			copy(conds, prev.Conds)
+			conds = append(conds, clause.Condition{Join: "AND", Exprs: exprs})
 			db.Statement.AddClause(clause.Where{Conds: conds})
 			return true
 		}
@@ -432,7 +474,7 @@ func updateRows(db *DB) {
 	if !ok || len(set.Assignments) == 0 {
 		return
 	}
-	if _, skip := db.Statement.Get("fusion:skip_timestamps"); !skip {
+	if !db.Statement.SkipTimestamps {
 		for _, field := range table.Fields {
 			if !field.AutoUpdateTime {
 				continue

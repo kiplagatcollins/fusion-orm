@@ -43,6 +43,9 @@ type Statement struct {
 	RaiseErrorOnNotFound bool
 	// SkipHooks suppresses model hooks for this statement.
 	SkipHooks bool
+	// SkipTimestamps suppresses automatic UpdatedAt maintenance
+	// (UpdateColumn/UpdateColumns).
+	SkipTimestamps bool
 	// CreateBatchSize bounds rows per INSERT statement (0 = all rows).
 	CreateBatchSize int
 	// Preloads holds requested relation paths; each path is loaded in one
@@ -243,6 +246,7 @@ func (stmt *Statement) clone() *Statement {
 		Table:                stmt.Table,
 		RaiseErrorOnNotFound: stmt.RaiseErrorOnNotFound,
 		SkipHooks:            stmt.SkipHooks,
+		SkipTimestamps:       stmt.SkipTimestamps,
 		CreateBatchSize:      stmt.CreateBatchSize,
 		Preloads:             clonePreloads(stmt.Preloads),
 		Joins:                append([]joinEntry(nil), stmt.Joins...),

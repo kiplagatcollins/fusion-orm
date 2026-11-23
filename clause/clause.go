@@ -36,12 +36,24 @@ func Expr(sql string, vars ...any) Expression {
 }
 
 // Build appends the expression, replacing ? with dialect placeholders.
+// A ? beyond the available vars renders nothing (matching the historical
+// split-based behavior) — and scanning bytes avoids allocating a parts
+// slice per rendered row.
 func (e Expression) Build(b Builder) {
-	parts := strings.Split(e.SQL, "?")
-	for i, part := range parts {
-		b.WriteString(part)
-		if i < len(e.Vars) && i < len(parts)-1 {
-			b.AddVar(e.Vars[i])
+	rest := e.SQL
+	for vi := 0; ; {
+		i := strings.IndexByte(rest, '?')
+		if i < 0 {
+			b.WriteString(rest)
+			return
+		}
+		if i > 0 {
+			b.WriteString(rest[:i])
+		}
+		rest = rest[i+1:]
+		if vi < len(e.Vars) {
+			b.AddVar(e.Vars[vi])
+			vi++
 		}
 	}
 }
