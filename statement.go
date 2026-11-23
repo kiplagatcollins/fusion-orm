@@ -122,32 +122,40 @@ var buildOrder = []string{
 	"on_conflict", "where", "order", "limit", "offset", "locking", "returning",
 }
 
+// standardClauses accelerates the "is this a known clause name" check when
+// appending custom clauses after the canonical order.
+var standardClauses = func() map[string]bool {
+	m := make(map[string]bool, len(buildOrder))
+	for _, name := range buildOrder {
+		m[name] = true
+	}
+	return m
+}()
+
 // BuildClauses renders all registered clauses in order, binds vars, and
 // stores the result in SQL. Each build starts with a fresh var list.
 func (stmt *Statement) BuildClauses() []byte {
 	stmt.normalizeOnConflict()
-	b := &statementBuilder{stmt: stmt}
+	b := &statementBuilder{stmt: stmt, buf: make([]byte, 0, 128)}
 	stmt.Vars = stmt.Vars[:0]
-	names := make([]string, 0, len(stmt.Order))
 	for _, name := range buildOrder {
-		if stmt.Clauses[name] != nil {
-			names = append(names, name)
+		c := stmt.Clauses[name]
+		if c == nil {
+			continue
 		}
+		if len(b.buf) > 0 && b.buf[len(b.buf)-1] != ' ' {
+			b.buf = append(b.buf, ' ')
+		}
+		c.Build(b)
 	}
 	for _, name := range stmt.Order {
-		found := false
-		for _, existing := range names {
-			if existing == name {
-				found = true
-				break
-			}
+		if standardClauses[name] {
+			continue
 		}
-		if !found && stmt.Clauses[name] != nil {
-			names = append(names, name)
-		}
-	}
-	for _, name := range names {
 		c := stmt.Clauses[name]
+		if c == nil {
+			continue
+		}
 		if len(b.buf) > 0 && b.buf[len(b.buf)-1] != ' ' {
 			b.buf = append(b.buf, ' ')
 		}
@@ -230,7 +238,6 @@ func (stmt *Statement) clone() *Statement {
 		DB:                   stmt.DB,
 		ConnPool:             stmt.ConnPool,
 		Context:              stmt.Context,
-		Settings:             &sync.Map{},
 		Model:                stmt.Model,
 		Dest:                 stmt.Dest,
 		Table:                stmt.Table,
@@ -247,6 +254,9 @@ func (stmt *Statement) clone() *Statement {
 		newStmt.Vars = append([]any(nil), stmt.Vars...)
 	}
 	if stmt.Settings != nil {
+		// Settings are rare: allocate (and replay) only when the source
+		// actually has entries.
+		newStmt.Settings = &sync.Map{}
 		stmt.Settings.Range(func(k, v any) bool {
 			newStmt.Settings.Store(k, v)
 			return true

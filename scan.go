@@ -97,24 +97,45 @@ func scanRows(rows *sql.Rows, dest any, table *schema.Table) (int, error) {
 	return scanScalar(rows, value)
 }
 
+// scanBuffers holds the per-column scan destinations. They are allocated
+// once per result set and reused for every row: rows.Scan overwrites the
+// holder values in place, so per-row allocation is pure GC pressure.
+type scanBuffers struct {
+	raw     []any
+	holders []any
+}
+
+func newScanBuffers(n int) *scanBuffers {
+	buf := &scanBuffers{raw: make([]any, n), holders: make([]any, n)}
+	for i := range buf.raw {
+		buf.holders[i] = &buf.raw[i]
+	}
+	return buf
+}
+
 func scanSlice(rows *sql.Rows, slice reflect.Value, table *schema.Table, columns []string) (int, error) {
 	elemType := slice.Type().Elem()
 	if elemType.Kind() != reflect.Struct && !(elemType.Kind() == reflect.Pointer && elemType.Elem().Kind() == reflect.Struct) {
 		return scanScalarSlice(rows, slice, elemType)
 	}
 	plan := newScanPlan(columns, table)
+	buf := newScanBuffers(len(columns))
 	count := 0
 	for rows.Next() {
-		var elem reflect.Value
 		if elemType.Kind() == reflect.Pointer {
-			elem = reflect.New(elemType.Elem())
+			elem := reflect.New(elemType.Elem())
+			if err := scanOne(rows, elem, plan, buf); err != nil {
+				return count, err
+			}
+			slice.Set(reflect.Append(slice, elem))
 		} else {
-			elem = reflect.New(elemType).Elem()
+			// Append a zero element and scan into the slice slot directly:
+			// no per-row reflect.New and no copy from a temporary.
+			slice.Set(reflect.Append(slice, reflect.Zero(elemType)))
+			if err := scanOne(rows, slice.Index(slice.Len()-1), plan, buf); err != nil {
+				return count, err
+			}
 		}
-		if err := scanOne(rows, elem, plan); err != nil {
-			return count, err
-		}
-		slice.Set(reflect.Append(slice, elem))
 		count++
 	}
 	return count, rows.Err()
@@ -122,9 +143,10 @@ func scanSlice(rows *sql.Rows, slice reflect.Value, table *schema.Table, columns
 
 func scanStruct(rows *sql.Rows, value reflect.Value, table *schema.Table, columns []string, _ bool) (int, error) {
 	plan := newScanPlan(columns, table)
+	buf := newScanBuffers(len(columns))
 	count := 0
 	for rows.Next() {
-		if err := scanOne(rows, value, plan); err != nil {
+		if err := scanOne(rows, value, plan, buf); err != nil {
 			return count, err
 		}
 		count++
@@ -132,13 +154,8 @@ func scanStruct(rows *sql.Rows, value reflect.Value, table *schema.Table, column
 	return count, rows.Err()
 }
 
-func scanOne(rows *sql.Rows, value reflect.Value, plan *scanPlan) error {
-	raw := make([]any, len(plan.columns))
-	holders := make([]any, len(plan.columns))
-	for i := range raw {
-		holders[i] = &raw[i]
-	}
-	if err := rows.Scan(holders...); err != nil {
+func scanOne(rows *sql.Rows, value reflect.Value, plan *scanPlan, buf *scanBuffers) error {
+	if err := rows.Scan(buf.holders...); err != nil {
 		return fmt.Errorf("scan row: %w", err)
 	}
 	for i, target := range plan.targets {
@@ -149,7 +166,7 @@ func scanOne(rows *sql.Rows, value reflect.Value, plan *scanPlan) error {
 		if !fieldValue.IsValid() {
 			continue
 		}
-		if err := target.field.Scanner(fieldValue, raw[i]); err != nil {
+		if err := target.field.Scanner(fieldValue, buf.raw[i]); err != nil {
 			return fmt.Errorf("scan %s: %w", target.field.DBName, err)
 		}
 	}
@@ -161,21 +178,17 @@ func scanMap(rows *sql.Rows, value reflect.Value, columns []string) (int, error)
 		value.Set(reflect.MakeMap(value.Type()))
 	}
 	keyType, valType := value.Type().Key(), value.Type().Elem()
+	buf := newScanBuffers(len(columns))
 	count := 0
 	for rows.Next() {
 		if len(columns) < 2 {
 			return count, errors.New("scan map: need two columns")
 		}
-		raw := make([]any, len(columns))
-		holders := make([]any, len(columns))
-		for i := range raw {
-			holders[i] = &raw[i]
-		}
-		if err := rows.Scan(holders...); err != nil {
+		if err := rows.Scan(buf.holders...); err != nil {
 			return count, fmt.Errorf("scan row: %w", err)
 		}
 		key := reflect.ValueOf(columns[0])
-		val := reflect.ValueOf(raw[1])
+		val := reflect.ValueOf(buf.raw[1])
 		if !val.IsValid() {
 			val = reflect.Zero(valType)
 		}
@@ -202,11 +215,13 @@ func scanScalar(rows *sql.Rows, value reflect.Value) (int, error) {
 func scanScalarSlice(rows *sql.Rows, slice reflect.Value, elemType reflect.Type) (int, error) {
 	count := 0
 	for rows.Next() {
-		elem := reflect.New(elemType)
-		if err := rows.Scan(elem.Interface()); err != nil {
+		// Append a zero element and scan into the slice slot: the pointer
+		// into the slice costs one interface boxing, not a fresh element.
+		slice.Set(reflect.Append(slice, reflect.Zero(elemType)))
+		dest := slice.Index(slice.Len() - 1).Addr().Interface()
+		if err := rows.Scan(dest); err != nil {
 			return count, fmt.Errorf("scan scalar: %w", err)
 		}
-		slice.Set(reflect.Append(slice, elem.Elem()))
 		count++
 	}
 	return count, rows.Err()

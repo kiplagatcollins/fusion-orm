@@ -411,7 +411,6 @@ func (db *DB) getInstance() *DB {
 			DB:       tx,
 			ConnPool: db.Statement.ConnPool,
 			Context:  db.Statement.Context,
-			Settings: &sync.Map{},
 		}
 	} else {
 		tx.Statement = db.Statement.clone()

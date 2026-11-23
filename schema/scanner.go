@@ -296,6 +296,14 @@ func scanTime(dst reflect.Value, src any) error {
 	if _, offset := tm.Zone(); offset == 0 {
 		tm = tm.UTC()
 	}
+	// Fast path: assign through a typed pointer. reflect.ValueOf(tm) would
+	// heap-box the 24-byte time.Time on every scanned row.
+	if dst.Type() == timeType && dst.CanAddr() {
+		if p, ok := dst.Addr().Interface().(*time.Time); ok {
+			*p = tm
+			return nil
+		}
+	}
 	value := reflect.ValueOf(tm)
 	if value.Type().AssignableTo(dst.Type()) {
 		dst.Set(value)

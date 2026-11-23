@@ -104,6 +104,15 @@ func commitOrRollback(db *DB) {
 
 func namedHook(name string) Callback {
 	return func(db *DB) {
+		// Hook dispatch is opt-in by method presence: skip the reflection
+		// (modelValues + MethodByName) entirely for models without hooks.
+		table, err := db.modelTable()
+		if err != nil {
+			return
+		}
+		if !table.Hooks.Has(name) {
+			return
+		}
 		model := db.Statement.Model
 		if model == nil {
 			model = db.Statement.Dest
@@ -229,27 +238,32 @@ func insertRows(db *DB) {
 			return
 		}
 	}
+	returning := db.Dialector.Features().Has(feature.InsertReturning)
+	// Resolve columns to fields once per statement, not once per row.
 	columns := insertColumns(table)
+	fields := make([]*schema.Field, len(columns))
+	for i, col := range columns {
+		fields[i] = table.Column(col)
+	}
+	ph := placeholdersFor(len(columns))
 	batch := db.Statement.CreateBatchSize
 	if batch <= 0 || batch > len(values) {
 		batch = len(values)
 	}
-	returning := db.Dialector.Features().Has(feature.InsertReturning)
 	for start := 0; start < len(values) && db.Error == nil; start += batch {
 		end := min(start+batch, len(values))
 		rows := make([]clause.Expression, 0, end-start)
 		for _, value := range values[start:end] {
-			exprs := make([]clause.Expression, len(columns))
-			for i, col := range columns {
-				var v any
-				if field := table.Column(col); field != nil {
-					if fv := fieldAt(value, field.Index); fv.IsValid() {
-						v = fv.Interface()
-					}
+			vars := make([]any, len(columns))
+			for i, field := range fields {
+				if field == nil {
+					continue
 				}
-				exprs[i] = clause.Expr("?", v)
+				if fv := fieldAt(value, field.Index); fv.IsValid() {
+					vars[i] = fv.Interface()
+				}
 			}
-			rows = append(rows, clause.Expression{SQL: placeholders(len(columns)), Vars: exprVars(exprs)})
+			rows = append(rows, clause.Expression{SQL: ph, Vars: vars})
 		}
 		db.Statement.AddClause(clause.Insert{Table: db.tableName(table), Columns: columns})
 		db.Statement.AddClause(clause.Values{Rows: rows})
@@ -275,14 +289,32 @@ func insertRows(db *DB) {
 }
 
 func insertColumns(table *schema.Table) []string {
-	columns := make([]string, 0, len(table.Fields))
-	for _, field := range table.Fields {
-		if field.PrimaryKey && field.AutoIncrement {
-			continue
+	return table.InsertColumns
+}
+
+// placeholderCache holds ready-made "(?, ?, ...)" bodies for common column
+// counts so row building never rebuilds the same string.
+var placeholderCache = func() []string {
+	const max = 64
+	out := make([]string, max+1)
+	for n := 1; n <= max; n++ {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteByte('?')
 		}
-		columns = append(columns, field.DBName)
+		out[n] = b.String()
 	}
-	return columns
+	return out
+}()
+
+func placeholdersFor(n int) string {
+	if n <= len(placeholderCache)-1 {
+		return placeholderCache[n]
+	}
+	return placeholders(n)
 }
 
 func placeholders(n int) string {
@@ -297,14 +329,6 @@ func placeholders(n int) string {
 		b.WriteByte('?')
 	}
 	return b.String()
-}
-
-func exprVars(exprs []clause.Expression) []any {
-	vars := make([]any, 0, len(exprs))
-	for _, expr := range exprs {
-		vars = append(vars, expr.Vars...)
-	}
-	return vars
 }
 
 func backfillFromReturning(db *DB, values []reflect.Value, table *schema.Table) {

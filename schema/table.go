@@ -22,6 +22,29 @@ type Hooks struct {
 	BeforeFind, AfterFind     bool
 }
 
+// Has reports whether the named hook method is present on the model.
+func (h Hooks) Has(name string) bool {
+	switch name {
+	case "BeforeCreate":
+		return h.BeforeCreate
+	case "AfterCreate":
+		return h.AfterCreate
+	case "BeforeUpdate":
+		return h.BeforeUpdate
+	case "AfterUpdate":
+		return h.AfterUpdate
+	case "BeforeDelete":
+		return h.BeforeDelete
+	case "AfterDelete":
+		return h.AfterDelete
+	case "BeforeFind":
+		return h.BeforeFind
+	case "AfterFind":
+		return h.AfterFind
+	}
+	return false
+}
+
 // Table is the parsed metadata for one model type.
 type Table struct {
 	Type      reflect.Type
@@ -33,8 +56,11 @@ type Table struct {
 	DBNames   map[string]*Field
 	Relations map[string]*Relation
 	Hooks     Hooks
-	Strict    bool
-	namer     Namer
+	// InsertColumns lists the columns written by a plain INSERT: every
+	// field except autoincrement primary keys. Precomputed at parse time.
+	InsertColumns []string
+	Strict        bool
+	namer         Namer
 }
 
 // Field returns a field by Go name.
@@ -155,6 +181,16 @@ func (t *Table) init(ts *Tables) error {
 		}
 		t.Relations[candidate.field.Name] = rel
 	}
+	// Insert columns are a property of the schema: compute once, reuse on
+	// every Create (readers must not modify the returned slice).
+	insertCols := make([]string, 0, len(t.Fields))
+	for _, field := range t.Fields {
+		if field.PrimaryKey && field.AutoIncrement {
+			continue
+		}
+		insertCols = append(insertCols, field.DBName)
+	}
+	t.InsertColumns = insertCols
 	return nil
 }
 
