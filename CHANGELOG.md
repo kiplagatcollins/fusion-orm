@@ -5,6 +5,29 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Performance (allocation-reduction pass)
+- Single-row Create is no longer wrapped in a synthetic BEGIN/COMMIT when the
+  write is provably one statement (no relations, no hooks, no multi-chunk
+  batch) — halves the common-case write path.
+- Scan loop: amortized slice growth (`appendOne`) replaces
+  `reflect.Append`+`Set` (one slice header per row); `time.Time` values scan
+  via typed assignment instead of boxing through `reflect.ValueOf`; RETURNING
+  integer ids scan typed rather than through `any`.
+- Per-row hot paths: insert SQL built directly (no intermediate
+  `clause.Values`/`Expression`), timestamps set with typed assignment, hook
+  presence checked via a precomputed flag (no per-row `MethodByName`
+  reflection), `ON CONFLICT` targets carry no `strings.Split` per build.
+- Chain/finisher paths use copy-on-append condition slices, a shared
+  `COUNT(*)` select, `Statement.SkipTimestamps` instead of a sync.Map
+  setting, and schema lookup by `reflect.Type` without instantiating a
+  throwaway model. Callback execution bookkeeping uses an indexed slice
+  instead of a map.
+- Measured (in-memory SQLite, interleaved A/B/C runs): fusion geomean now
+  leads bun by ~8% and gorm by ~28% across 11 operations; allocs/op down
+  30-97% per operation (Pluck 2067→57, FindAll 9798→4797, Create 86→46).
+
 ## [0.3.0] - 2026-11-21
 
 ### Added
