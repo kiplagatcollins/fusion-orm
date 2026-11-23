@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/clause"
@@ -53,15 +54,6 @@ func (d *DeletedAt) Scan(src any) error {
 
 // IsZero reports whether the row is live.
 func (d DeletedAt) IsZero() bool { return !d.Valid }
-
-func softDeleteField(table *schema.Table) *schema.Field {
-	for _, field := range table.Fields {
-		if field.SoftDelete {
-			return field
-		}
-	}
-	return nil
-}
 
 func isUnscoped(db *DB) bool {
 	_, ok := db.Statement.Get("fusion:unscoped")
@@ -125,15 +117,30 @@ func softDeleteValue(db *DB, field *schema.Field) any {
 	}
 }
 
+// softExprCache holds the live-row predicate per soft-delete field. The
+// expression is immutable (fields belong to one table parsed against one
+// dialect), so every query can share the cached value instead of re-quoting
+// the column and re-boxing the zero var per statement.
+var softExprCache sync.Map // *schema.Field -> clause.Expression
+
+func cachedSoftDeleteExpr(db *DB, field *schema.Field) clause.Expression {
+	if v, ok := softExprCache.Load(field); ok {
+		return v.(clause.Expression)
+	}
+	expr := softDeleteCondition(db, field, db.Statement.QuoteTo(field.DBName))
+	softExprCache.Store(field, expr)
+	return expr
+}
+
 func injectSoftDeleteFilter(db *DB, table *schema.Table) {
 	if isUnscoped(db) {
 		return
 	}
-	field := softDeleteField(table)
+	field := table.SoftDeleteField
 	if field == nil {
 		return
 	}
-	condition := softDeleteCondition(db, field, db.Statement.QuoteTo(field.DBName))
+	condition := cachedSoftDeleteExpr(db, field)
 	where, _ := db.Statement.Clause("where").(clause.Where)
 	if condHasSQL(where.Conds, condition.SQL) {
 		return
@@ -185,7 +192,7 @@ func rewriteSoftDelete(db *DB, table *schema.Table) bool {
 	if isUnscoped(db) {
 		return false
 	}
-	field := softDeleteField(table)
+	field := table.SoftDeleteField
 	if field == nil {
 		return false
 	}
@@ -225,7 +232,7 @@ func (db *DB) Restore(value any) *DB {
 		tx.AddError(err)
 		return tx
 	}
-	field := softDeleteField(table)
+	field := table.SoftDeleteField
 	if field == nil {
 		tx.AddError(fmt.Errorf("%w: %s has no soft-delete field", ErrInvalidValue, table.Name))
 		return tx

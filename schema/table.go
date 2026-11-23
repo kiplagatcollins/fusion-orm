@@ -59,8 +59,12 @@ type Table struct {
 	// InsertColumns lists the columns written by a plain INSERT: every
 	// field except autoincrement primary keys. Precomputed at parse time.
 	InsertColumns []string
-	Strict        bool
-	namer         Namer
+	// SoftDeleteField is the field carrying the soft-delete predicate, or
+	// nil when the model has none. Precomputed so per-query filtering is a
+	// field access instead of a scan of every column.
+	SoftDeleteField *Field
+	Strict          bool
+	namer           Namer
 }
 
 // Field returns a field by Go name.
@@ -185,6 +189,9 @@ func (t *Table) init(ts *Tables) error {
 	// every Create (readers must not modify the returned slice).
 	insertCols := make([]string, 0, len(t.Fields))
 	for _, field := range t.Fields {
+		if field.SoftDelete && t.SoftDeleteField == nil {
+			t.SoftDeleteField = field
+		}
 		if field.PrimaryKey && field.AutoIncrement {
 			continue
 		}

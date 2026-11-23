@@ -95,7 +95,7 @@ func applyJoins(db *DB, table *schema.Table) error {
 		// preload does, otherwise a deleted profile still loads (GORM #6998).
 		onExprs := []clause.Expression{on}
 		if !isUnscoped(db) {
-			if soft := softDeleteField(rel.JoinTable); soft != nil {
+			if soft := rel.JoinTable.SoftDeleteField; soft != nil {
 				qualified := db.Statement.QuoteTo(alias) + "." + db.Statement.QuoteTo(soft.DBName)
 				onExprs = append(onExprs, softDeleteCondition(db, soft, qualified))
 			}
