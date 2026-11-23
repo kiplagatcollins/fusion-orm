@@ -41,7 +41,19 @@ func associationValues(db *DB) (*schema.Table, []reflect.Value, bool) {
 	if err != nil {
 		return nil, nil, false
 	}
-	values, err := modelValues(db.Statement.Dest)
+	// No relations means every caller has nothing to iterate: bail before
+	// resolving values (and before formatting a discarded error below).
+	if len(table.Relations) == 0 {
+		return nil, nil, false
+	}
+	// Dest wins when set; probe it only then — Updates-on-a-Model leaves
+	// Dest nil, and modelValues(nil) would format an error on every call.
+	var values []reflect.Value
+	if db.Statement.Dest != nil {
+		values, err = modelValues(db.Statement.Dest)
+	} else {
+		err = ErrInvalidValue
+	}
 	if err != nil {
 		values, err = modelValues(db.Statement.Model)
 	}

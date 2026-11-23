@@ -456,14 +456,18 @@ func guardConditions(db *DB, table *schema.Table) bool {
 	if db.AllowGlobalUpdate {
 		return true
 	}
-	if values, err := modelValues(db.Statement.Dest); err == nil && len(values) == 1 {
-		if exprs := structConditions(db, values[0].Interface()); len(exprs) > 0 {
-			prev, _ := db.Statement.Clause("where").(clause.Where)
-			conds := make([]clause.Condition, len(prev.Conds), len(prev.Conds)+1)
-			copy(conds, prev.Conds)
-			conds = append(conds, clause.Condition{Join: "AND", Exprs: exprs})
-			db.Statement.AddClause(clause.Where{Conds: conds})
-			return true
+	// Dest stays nil for Updates-on-a-Model; only probe it when set, or
+	// every update pays for formatting an error that gets discarded.
+	if db.Statement.Dest != nil {
+		if values, err := modelValues(db.Statement.Dest); err == nil && len(values) == 1 {
+			if exprs := structConditions(db, values[0].Interface()); len(exprs) > 0 {
+				prev, _ := db.Statement.Clause("where").(clause.Where)
+				conds := make([]clause.Condition, len(prev.Conds), len(prev.Conds)+1)
+				copy(conds, prev.Conds)
+				conds = append(conds, clause.Condition{Join: "AND", Exprs: exprs})
+				db.Statement.AddClause(clause.Where{Conds: conds})
+				return true
+			}
 		}
 	}
 	db.AddError(ErrMissingWhereClause)
