@@ -130,7 +130,9 @@ func (p *CallbackProcessor) Match(match func(*DB) bool) error {
 // panic is recovered only long enough to roll back: db.Error is set when
 // still nil, finalizers run, and the original value is re-panicked.
 func (p *CallbackProcessor) Execute(db *DB) {
-	executed := make(map[string]bool, len(p.entries))
+	// Per-run state indexed by entry position: a slice, not a map — this
+	// executes once per operation and the map was measurable overhead.
+	executed := make([]bool, len(p.entries))
 	defer func() {
 		if r := recover(); r != nil {
 			if db.Error == nil {
@@ -140,14 +142,14 @@ func (p *CallbackProcessor) Execute(db *DB) {
 			panic(r)
 		}
 	}()
-	for _, entry := range p.entries {
+	for i, entry := range p.entries {
 		if db.Error != nil {
 			break
 		}
 		if entry.match != nil && !entry.match(db) {
 			continue
 		}
-		executed[entry.name] = true
+		executed[i] = true
 		entry.fn(db)
 	}
 	p.runFinalizers(db, executed)
@@ -155,15 +157,17 @@ func (p *CallbackProcessor) Execute(db *DB) {
 
 // runFinalizers executes finalizer entries that have not run yet. Entries are
 // marked before invocation so a panicking finalizer cannot run twice.
-func (p *CallbackProcessor) runFinalizers(db *DB, executed map[string]bool) {
-	for _, entry := range p.entries {
-		if !entry.finalizer || executed[entry.name] {
+func (p *CallbackProcessor) runFinalizers(db *DB, executed []bool) {
+	for i, entry := range p.entries {
+		if !entry.finalizer || (i < len(executed) && executed[i]) {
 			continue
 		}
 		if entry.match != nil && !entry.match(db) {
 			continue
 		}
-		executed[entry.name] = true
+		if i < len(executed) {
+			executed[i] = true
+		}
 		entry.fn(db)
 	}
 }

@@ -20,7 +20,12 @@ func (db *DB) resolveTable(model any) (*schema.Table, error) {
 	if typ.Kind() != reflect.Struct {
 		return nil, fmt.Errorf("%w: %s is not a struct model", ErrInvalidValue, typ)
 	}
-	return db.Parse(reflect.New(typ).Interface())
+	if db.tables == nil {
+		return nil, schema.ErrInvalidModel
+	}
+	// Get by type directly: Parse(reflect.New(typ).Interface()) would
+	// allocate a throwaway model instance on every resolution.
+	return db.tables.Get(typ)
 }
 
 func (db *DB) modelTable() (*schema.Table, error) {
