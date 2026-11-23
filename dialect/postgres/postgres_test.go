@@ -19,6 +19,7 @@ func TestFeatures(t *testing.T) {
 		feature.DoubleColonCast,
 		feature.DefaultPlaceholder,
 		feature.Merge,
+		feature.RowValues,
 		feature.TableTruncate,
 		feature.TableCascade,
 		feature.GeneratedIdentity,

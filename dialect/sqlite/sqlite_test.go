@@ -20,6 +20,7 @@ func TestFeatures(t *testing.T) {
 		feature.DeleteReturning,
 		feature.AutoIncrement,
 		feature.CompositeIn,
+		feature.RowValues,
 		feature.TableNotExists,
 		feature.CreateIndexIfNotExists,
 		feature.Savepoint,

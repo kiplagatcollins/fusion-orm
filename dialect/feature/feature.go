@@ -28,6 +28,9 @@ const (
 	ValuesRow
 	// CompositeIn enables WHERE (A, B) IN ((N, NN), ...) comparison syntax.
 	CompositeIn
+	// RowValues enables row-value comparison syntax, e.g.
+	// WHERE (A, B) > (N, NN), used for composite-key keyset pagination.
+	RowValues
 
 	// SELECT features.
 
@@ -200,6 +203,7 @@ var ordered = []entry{
 	{DoubleColonCast, "DoubleColonCast"},
 	{ValuesRow, "ValuesRow"},
 	{CompositeIn, "CompositeIn"},
+	{RowValues, "RowValues"},
 	{OffsetFetch, "OffsetFetch"},
 	{SelectExists, "SelectExists"},
 	{InsertReturning, "InsertReturning"},

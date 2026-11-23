@@ -27,7 +27,7 @@ go vet ./... && go vet -tags=audit ./...
 | A | Implicit tx / panic / rollback lifecycle | **FIXED (was severe)** | `...ImplicitTxReleasedOnInsertError`, `...ImplicitTxReleasedOnHookPanic` | #7897, #7908, #7459 |
 | B | Prepared-stmt cache races & lifecycle | **FIXED** | `...StmtCacheEvictionClosesInUseStmt`, `...PreparedPoolForwardsPing` | #7831, #7832, #7788, #7465, #6181, #7255 |
 | C | Rows/Row lifecycle & NULL scanning | **FIXED (Row) / SAFE (rows)** | `...RowNeverNil` | #7575, #7855, #7403 |
-| D | FindInBatches / limit & field mapping | SAFE (w/ composite-PK caveat) | — | #7737, #7384, #7657 |
+| D | FindInBatches / limit & field mapping | **FIXED (composite keyset)** | `...CompositePKFindInBatches` | #7737, #7384, #7657 |
 | E | Session reuse / chain clone / scope errors | **FIXED (scope errors)** | `...ScopeErrorsPropagate` | #6283, #7765, #5846 |
 | F | Condition building (Or/And/raw/map) | **FIXED (was severe)** | `...ClauseOrRendersOr`, `...MapConditionSQLStable` | #5652, #7351, #5846 |
 | G | Count / aggregation | **FIXED** | `...CountStripsOrderBy` | #7516, #6005 |
@@ -40,7 +40,7 @@ go vet ./... && go vet -tags=audit ./...
 | N | SetColumn / dirty-set semantics | N/A (API absent) | — | #7512, #7910 |
 | O | Logging hooks (format strings) | SAFE | — | #5261, #7583 |
 | P | Error wrapping / AddError | SAFE | — | #5964, #7459 |
-| Q | Model/metadata resolution | SAFE (composite-PK caveat) | — | #6060, #6795 |
+| Q | Model/metadata resolution | **FIXED (composite keys)** | `...CompositePK*` | #6060, #6795 |
 
 **Triage statistics**: 450 issues → 155 could-apply · 62 uncertain · 233 N/A.
 17 classes (A–Q); 11 classes fixed on `audit-fixes` (commits `9f5c590..bfc94d0`),
@@ -103,13 +103,13 @@ go vet ./... && go vet -tags=audit ./...
   nullable → zero-value works (#7855 SAFE); context cancellation surfaces as an
   error, no panic. `ScanRows` API doesn't exist (#7403 N/A).
 
-### D — FindInBatches / mapping  · SAFE
+### D — FindInBatches / mapping  · FIXED
 
 `batchSize <= 0` guarded (`finisher_api.go:288`); `fieldAt` bounds-checks the
   field index (`scan.go:55-66`) so the #7737 panic class cannot occur (worst
-  case a silent no-op mapping). **Caveat**: `primaryField` resolves to `PKs[0]`
-  only (`schema/relation.go:129,136`) — composite-PK pagination walks only the
-  first key (#7384/§Q).
+  case a silent no-op mapping). Composite-PK pagination now walks the full
+  key tuple via row-value keyset comparison (`(a, b) > (?, ?)`, gated on
+  `feature.RowValues`) instead of `PKs[0]` only (#7384/§Q; fixed 2026-11-23).
 
 ### E — Session reuse / scopes  · FIXED (low)
 
@@ -247,14 +247,15 @@ string ever interprets user data (#5261 SAFE). Log level is configurable
 `AddError` chains every cause with `%w; %w` and nil-guards input
 (`errors.go:90-108`); `errors.Is` matches any cause in the chain (#5964, #7459).
 
-### Q — Model/metadata resolution  · SAFE (composite-PK caveat)
+### Q — Model/metadata resolution  · FIXED
 
 Embedded structs resolve correctly (`schema/table.go:194`); `primaryField`
 falls back to `PKs[0]`/`"id"` so common models never hard-fail (#6060, #6795).
-**Caveat**: integer `Where(42)`-style conds bind to `PKs[0]` only
-(`schema/relation.go:129,136`) — on
-composite-PK tables this matches the wrong rows (extends D's pagination
-caveat).
+Composite-PK handling fixed 2026-11-23: scalar id conditions error instead of
+binding `PKs[0]`; `Save`/`FirstOrCreate` match on the full key tuple;
+`First`/`Last` order by the tuple; relation inference fails loudly when a
+composite key cannot be expressed (belongs-to without `references`,
+has-one/has-many/m2m on a composite-key side).
 
 ---
 

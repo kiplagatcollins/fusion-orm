@@ -54,6 +54,7 @@ func (d *Dialector) Features() feature.Feature {
 		feature.SelectExists |
 		feature.GeneratedIdentity |
 		feature.CompositeIn |
+		feature.RowValues |
 		feature.FKDefaultOnAction |
 		feature.DeleteReturning |
 		feature.Merge |

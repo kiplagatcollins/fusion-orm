@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/kiplagatcollins/fusion-orm/clause"
+	"github.com/kiplagatcollins/fusion-orm/dialect/feature"
 	"github.com/kiplagatcollins/fusion-orm/schema"
 )
 
@@ -37,7 +38,6 @@ func (db *DB) Save(value any) *DB {
 		tx.AddError(err)
 		return tx
 	}
-	pk := primaryField(table)
 
 	isSlice := false
 	if rv := reflect.ValueOf(value); rv.Kind() == reflect.Pointer {
@@ -55,14 +55,12 @@ func (db *DB) Save(value any) *DB {
 		tx := db.getInstance()
 		for i := range values {
 			elem := rv.Index(i).Interface()
-			if pk != nil {
-				if fv := fieldAt(values[i], pk.Index); fv.IsValid() && !pk.IsZero(fv) {
-					res := db.Where(pk.DBName+" = ?", fv.Interface()).Updates(elem)
-					if res.Error != nil {
-						return res
-					}
-					continue
+			if cond, vars, ok := pkCondition(table, values[i]); ok {
+				res := db.Where(cond, vars...).Updates(elem)
+				if res.Error != nil {
+					return res
 				}
+				continue
 			}
 			if res := db.Create(elem); res.Error != nil {
 				return res
@@ -71,9 +69,9 @@ func (db *DB) Save(value any) *DB {
 		return tx
 	}
 
-	if pk != nil && len(values) == 1 {
-		if fv := fieldAt(values[0], pk.Index); fv.IsValid() && !pk.IsZero(fv) {
-			return db.Where(pk.DBName+" = ?", fv.Interface()).Updates(value)
+	if len(values) == 1 {
+		if cond, vars, ok := pkCondition(table, values[0]); ok {
+			return db.Where(cond, vars...).Updates(value)
 		}
 	}
 	return db.Create(value)
@@ -126,8 +124,14 @@ func (db *DB) firstWithOrder(dest any, direction string, conds ...any) *DB {
 	}
 	tx = applyConds(tx, conds...)
 	if table, err := db.resolveTable(tx.Statement.Model); err == nil {
-		if pk := primaryField(table); pk != nil {
-			tx.Statement.AddClause(clause.OrderBy{Columns: []string{pk.DBName + " " + direction}})
+		// Order by the full primary-key tuple so First/Last are
+		// deterministic on composite keys (single-key SQL is unchanged).
+		if pks := pkFields(table); len(pks) > 0 {
+			cols := make([]string, len(pks))
+			for i, pk := range pks {
+				cols[i] = pk.DBName + " " + direction
+			}
+			tx.Statement.AddClause(clause.OrderBy{Columns: cols})
 		}
 	}
 	tx.Statement.AddClause(clause.Limit{N: 1})
@@ -149,16 +153,25 @@ func applyConds(db *DB, conds ...any) *DB {
 			return db
 		}
 	}
+	pks := pkFields(table)
 	pk := primaryField(table)
 	for _, cond := range conds {
 		switch v := cond.(type) {
 		case string:
 			db.addConditionTo(v, nil, false)
 		case int:
+			if len(pks) > 1 {
+				db.AddError(compositeScalarCondError(table, pks))
+				return db
+			}
 			if pk != nil {
 				db.addConditionTo(pk.DBName+" = ?", []any{int64(v)}, false)
 			}
 		case int64:
+			if len(pks) > 1 {
+				db.AddError(compositeScalarCondError(table, pks))
+				return db
+			}
 			if pk != nil {
 				db.addConditionTo(pk.DBName+" = ?", []any{v}, false)
 			}
@@ -169,6 +182,19 @@ func applyConds(db *DB, conds ...any) *DB {
 		}
 	}
 	return db
+}
+
+// compositeScalarCondError reports that a scalar id cannot address a
+// composite key: binding PKs[0] would match every sibling row sharing that
+// column (audit group D/Q).
+func compositeScalarCondError(table *schema.Table, pks []*schema.Field) error {
+	names := make([]string, len(pks))
+	for i, pk := range pks {
+		names[i] = pk.DBName
+	}
+	return fmt.Errorf(
+		"%w: model %s has a composite primary key (%s); pass a map or explicit condition instead of a scalar id",
+		ErrInvalidValue, table.Name, strings.Join(names, ", "))
 }
 
 // Update sets one column on matching rows. A WHERE clause (or a model with
@@ -360,9 +386,15 @@ func (db *DB) FindInBatches(dest any, batchSize int, fc func(tx *DB, batch int) 
 		tx.AddError(err)
 		return tx
 	}
-	pk := primaryField(table)
-	if pk == nil {
+	pks := pkFields(table)
+	if len(pks) == 0 {
 		tx.AddError(fmt.Errorf("%w: model %s has no primary key", ErrInvalidValue, table.Name))
+		return tx
+	}
+	composite := len(pks) > 1
+	if composite && !db.Dialector.Features().Has(feature.RowValues) {
+		tx.AddError(fmt.Errorf("%w: FindInBatches on %s paginates by its composite primary key (%s)",
+			NewUnsupportedFeatureError("RowValues"), table.Name, pks[0].DBName))
 		return tx
 	}
 
@@ -371,18 +403,34 @@ func (db *DB) FindInBatches(dest any, batchSize int, fc func(tx *DB, batch int) 
 		tx.AddError(fmt.Errorf("%w: FindInBatches needs a pointer to a slice", ErrInvalidValue))
 		return tx
 	}
+	orderCols := make([]string, len(pks))
+	for i, pk := range pks {
+		orderCols[i] = pk.DBName + " ASC"
+	}
 	base := db.getInstance()
-	var last any
+	var last []any
 	page := 0
 	for {
 		batch := base.Session(&Session{})
 		fresh := reflect.New(destType.Elem()).Interface()
 		batch.Statement.Dest = fresh
 		batch.Statement.Model = fresh
-		if last != nil {
-			batch = batch.Where(pk.DBName+" > ?", last)
+		if len(last) > 0 {
+			if composite {
+				// Row-value keyset: (a, b) > (?, ?) walks the tuple order
+				// without skipping or repeating rows.
+				quoted := make([]string, len(pks))
+				for i, pk := range pks {
+					quoted[i] = batch.Statement.QuoteTo(pk.DBName)
+				}
+				batch = batch.Where("("+strings.Join(quoted, ", ")+") > (?, ?)", last...)
+			} else {
+				batch = batch.Where(pks[0].DBName+" > ?", last[0])
+			}
 		}
-		batch = batch.Order(pk.DBName + " ASC")
+		for _, col := range orderCols {
+			batch = batch.Order(col)
+		}
 		batch = batch.Limit(batchSize)
 		batch.callbacks.query.Execute(batch)
 		if batch.Error != nil {
@@ -401,11 +449,19 @@ func (db *DB) FindInBatches(dest any, batchSize int, fc func(tx *DB, batch int) 
 		if err != nil || len(values) == 0 {
 			break
 		}
-		fv := fieldAt(values[len(values)-1], pk.Index)
-		if !fv.IsValid() {
+		lastVars := make([]any, 0, len(pks))
+		for _, pk := range pks {
+			fv := fieldAt(values[len(values)-1], pk.Index)
+			if !fv.IsValid() {
+				lastVars = nil
+				break
+			}
+			lastVars = append(lastVars, fv.Interface())
+		}
+		if len(lastVars) < len(pks) {
 			break
 		}
-		last = fv.Interface()
+		last = lastVars
 		if batch.RowsAffected < int64(batchSize) {
 			break
 		}
@@ -458,9 +514,17 @@ func (db *DB) FirstOrCreate(dest any, conds ...any) *DB {
 		found.AddError(err)
 		return found
 	}
-	if pk := primaryField(table); pk != nil {
+	if pks := pkFields(table); len(pks) > 0 {
 		for _, value := range values {
-			if fv := fieldAt(value, pk.Index); fv.IsValid() && !pk.IsZero(fv) {
+			persisted := true
+			for _, pk := range pks {
+				fv := fieldAt(value, pk.Index)
+				if !fv.IsValid() || pk.IsZero(fv) {
+					persisted = false
+					break
+				}
+			}
+			if persisted {
 				return found
 			}
 		}

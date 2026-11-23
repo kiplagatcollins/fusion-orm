@@ -135,9 +135,11 @@ ordering errors).
    keep their old `email_idx`-style index; migration adds `email_idx_<table>`
    alongside it. Old duplicates are not dropped (dropping user-named indexes
    is out of scope).
-3. **Composite-PK caveats** from the audit remain for unrelated paths
+3. **Composite-PK caveats** from the audit remained for unrelated paths
    (classes D/Q: FindInBatches, metadata resolution) — only the junction
    migration and the dual-inline-`PRIMARY KEY` DDL bug were fixed here.
+   *(Resolved 2026-11-23 by the composite-PK correctness pass — see
+   `2026-11-23-composite-pk-design.md`.)*
 4. **`Save` on slices** stops at the first error; no batched/upsert variant.
 5. **`OnConflict{}` with nothing set** (no `DoNothing`, no columns, no
    `UpdateAll`) renders no clause — plain INSERT semantics, duplicate-key

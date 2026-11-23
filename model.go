@@ -3,6 +3,7 @@ package fusion
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/kiplagatcollins/fusion-orm/schema"
@@ -45,11 +46,46 @@ func (db *DB) tableName(table *schema.Table) string {
 	return table.Name
 }
 
-func primaryField(table *schema.Table) *schema.Field {
+// pkFields returns the fields that identify a row: the parsed primary-key
+// list, or the plain "id" column when the model relies on the naming
+// convention. Composite keys yield more than one field.
+func pkFields(table *schema.Table) []*schema.Field {
 	if len(table.PKs) > 0 {
-		return table.PKs[0]
+		return table.PKs
 	}
-	return table.Column("id")
+	if f := table.Column("id"); f != nil {
+		return []*schema.Field{f}
+	}
+	return nil
+}
+
+func primaryField(table *schema.Table) *schema.Field {
+	if pks := pkFields(table); len(pks) > 0 {
+		return pks[0]
+	}
+	return nil
+}
+
+// pkCondition builds a WHERE fragment matching every primary-key field of
+// item ("a = ? AND b = ?") plus the bound values. It reports false when the
+// table has no primary key or any PK field is zero, so callers fall back to
+// insert semantics instead of matching a partial key.
+func pkCondition(table *schema.Table, item reflect.Value) (string, []any, bool) {
+	pks := pkFields(table)
+	if len(pks) == 0 {
+		return "", nil, false
+	}
+	cols := make([]string, 0, len(pks))
+	vars := make([]any, 0, len(pks))
+	for _, pk := range pks {
+		fv := fieldAt(item, pk.Index)
+		if !fv.IsValid() || pk.IsZero(fv) {
+			return "", nil, false
+		}
+		cols = append(cols, pk.DBName+" = ?")
+		vars = append(vars, fv.Interface())
+	}
+	return strings.Join(cols, " AND "), vars, true
 }
 
 // modelValues returns the struct values to operate on (one for a struct,

@@ -396,6 +396,12 @@ func backfillFromLastInsertID(db *DB, values []reflect.Value, table *schema.Tabl
 	if pk == nil || len(values) == 0 {
 		return
 	}
+	// A composite key is client-assigned: the driver's LastInsertID is the
+	// SQLite rowid, which is no key column — backfilling it would corrupt
+	// the model's key fields.
+	if len(table.PKs) > 1 {
+		return
+	}
 	// The last insert id is only reliable for a single-row statement.
 	if len(values) != 1 {
 		return

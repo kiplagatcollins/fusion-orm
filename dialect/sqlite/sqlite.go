@@ -50,6 +50,7 @@ func (d *Dialector) Features() feature.Feature {
 		feature.SelectExists |
 		feature.AutoIncrement |
 		feature.CompositeIn |
+		feature.RowValues |
 		feature.FKDefaultOnAction |
 		feature.DeleteReturning |
 		feature.CreateIndexIfNotExists |

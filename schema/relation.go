@@ -96,8 +96,18 @@ func newRelation(ts *Tables, table *Table, field *Field, tag Tag) (*Relation, er
 		if rel.ForeignKey == nil {
 			return nil, fmt.Errorf("%w: %s.%s: no foreign key %q", ErrInvalidRelation, table.Name, field.Name, fkName)
 		}
+		if tag.Get("references") == "" && len(join.PKs) > 1 {
+			// Guessing PKs[0] would join every sibling row sharing that
+			// column; require the caller to name the referenced column.
+			return nil, fmt.Errorf("%w: %s.%s: %s has a composite primary key; specify a single \"references\" column", ErrInvalidRelation, table.Name, field.Name, join.Name)
+		}
 		rel.Reference = primaryField(join, tag.Get("references"))
 	case HasOne, HasMany:
+		if len(table.PKs) > 1 {
+			// The join table's single FK column cannot reference a
+			// composite key; inferring PKs[0] would preload incompletely.
+			return nil, fmt.Errorf("%w: %s.%s: %s has a composite primary key; has-one/has-many need a single-column primary key", ErrInvalidRelation, table.Name, field.Name, table.Name)
+		}
 		fkName := tag.Get("foreignkey")
 		if fkName == "" {
 			fkName = table.Type.Name() + "ID"
@@ -110,6 +120,10 @@ func newRelation(ts *Tables, table *Table, field *Field, tag Tag) (*Relation, er
 			}
 		}
 	case ManyToMany:
+		if len(table.PKs) > 1 || len(join.PKs) > 1 {
+			// Junction columns reference one primary-key column per side.
+			return nil, fmt.Errorf("%w: %s.%s: many2many needs a single-column primary key on both sides; %s has a composite primary key", ErrInvalidRelation, table.Name, field.Name, table.Name)
+		}
 		rel.M2MName = tag.Get("many2many")
 		if rel.M2MName == "" {
 			names := []string{table.Name, join.Name}

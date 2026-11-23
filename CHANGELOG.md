@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Composite primary keys no longer silently bind or order by the first key
+  column** (audit groups D/Q):
+  - Scalar id conditions (`First`/`Find`/`Take`/`Last`/`Delete(&m{}, 42)`) on
+    a composite-key model return `ErrInvalidValue` instead of matching every
+    row sharing `PKs[0]`. Single-key behavior is unchanged.
+  - `Save` matches updates on the full key tuple (`a = ? AND b = ?`) and
+    inserts when any key field is zero; `FirstOrCreate` treats a row as
+    persisted only when the whole tuple is set.
+  - `First`/`Last` order by the full key tuple, making results deterministic
+    when the first key column ties.
+  - `FindInBatches` paginates composite keys with row-value keyset
+    comparison (`(a, b) > (?, ?) ORDER BY a, b`), gated on the new
+    `feature.RowValues` flag (declared by the SQLite and PostgreSQL
+    dialects); dialects without it get a clear unsupported-feature error.
+  - SQLite `LastInsertID` backfill no longer overwrites client-assigned
+    composite key fields with the rowid.
+  - Relation inference fails loudly instead of guessing: belongs-to onto a
+    composite-key table requires an explicit `references` column;
+    has-one/has-many/many2many on a composite-key side are rejected at
+    parse time (single-FK relations onto composite tables via explicit tags
+    keep working).
+
 ## [0.3.1] - 2026-11-23
 
 ### Performance (allocation-reduction pass)
