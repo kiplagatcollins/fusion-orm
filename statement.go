@@ -34,9 +34,15 @@ type Statement struct {
 	Dest any
 	// Table overrides the model-derived table name.
 	Table string
-	// Clauses holds the accumulated clause builders by name.
+	// slots holds the standard clauses indexed by canonical build order
+	// (slotIndex); slotMask records which are present. Storing them inline
+	// makes Add/Remove/Clause and clone allocation-free for the hot names.
+	slots    [numSlots]clause.Interface
+	slotMask uint32
+	// Clauses holds custom (non-standard) clause builders by name,
+	// allocated only when a plugin or Clauses() call registers one.
 	Clauses map[string]clause.Interface
-	// Order is the stable clause build order.
+	// Order is the insertion order of custom clauses only.
 	Order []string
 
 	// RaiseErrorOnNotFound makes First/Take/Last return ErrRecordNotFound.
@@ -62,12 +68,70 @@ func statementContext(stmt *Statement) context.Context {
 	return context.TODO()
 }
 
-// AddClause registers or replaces c, preserving its first-seen build order.
-func (stmt *Statement) AddClause(c clause.Interface) {
-	if stmt.Clauses == nil {
-		stmt.Clauses = make(map[string]clause.Interface, 8)
+// slotNames is the canonical clause build order. Index i in this array is
+// the slot index for that clause; custom clauses follow after the slots.
+var slotNames = [...]string{
+	"with", "select", "insert", "update", "delete", "from", "join", "set", "values",
+	"on_conflict", "where", "order", "limit", "offset", "locking", "returning",
+}
+
+const numSlots = len(slotNames)
+
+// slotIndex maps a standard clause name to its slot. The switch is lowered
+// by the compiler to a binary search, cheaper than a map probe. The
+// statement_slots_match_order test guards the index constants against
+// slotNames drift.
+func slotIndex(name string) (uint, bool) {
+	switch name {
+	case "with":
+		return 0, true
+	case "select":
+		return 1, true
+	case "insert":
+		return 2, true
+	case "update":
+		return 3, true
+	case "delete":
+		return 4, true
+	case "from":
+		return 5, true
+	case "join":
+		return 6, true
+	case "set":
+		return 7, true
+	case "values":
+		return 8, true
+	case "on_conflict":
+		return 9, true
+	case "where":
+		return 10, true
+	case "order":
+		return 11, true
+	case "limit":
+		return 12, true
+	case "offset":
+		return 13, true
+	case "locking":
+		return 14, true
+	case "returning":
+		return 15, true
 	}
+	return 0, false
+}
+
+// AddClause registers or replaces c. Standard clause names land in fixed
+// slots (no allocation); custom names use the fallback map and keep their
+// first-seen build order after the standard clauses.
+func (stmt *Statement) AddClause(c clause.Interface) {
 	name := c.Name()
+	if i, ok := slotIndex(name); ok {
+		stmt.slotMask |= 1 << i
+		stmt.slots[i] = c
+		return
+	}
+	if stmt.Clauses == nil {
+		stmt.Clauses = make(map[string]clause.Interface, 4)
+	}
 	if _, exists := stmt.Clauses[name]; !exists {
 		stmt.Order = append(stmt.Order, name)
 	}
@@ -76,6 +140,11 @@ func (stmt *Statement) AddClause(c clause.Interface) {
 
 // RemoveClause drops the named clause from the statement.
 func (stmt *Statement) RemoveClause(name string) {
+	if i, ok := slotIndex(name); ok {
+		stmt.slotMask &^= 1 << i
+		stmt.slots[i] = nil
+		return
+	}
 	delete(stmt.Clauses, name)
 	for i, n := range stmt.Order {
 		if n == name {
@@ -86,7 +155,15 @@ func (stmt *Statement) RemoveClause(name string) {
 }
 
 // Clause returns the named clause, if present.
-func (stmt *Statement) Clause(name string) clause.Interface { return stmt.Clauses[name] }
+func (stmt *Statement) Clause(name string) clause.Interface {
+	if i, ok := slotIndex(name); ok {
+		if stmt.slotMask&(1<<i) == 0 {
+			return nil
+		}
+		return stmt.slots[i]
+	}
+	return stmt.Clauses[name]
+}
 
 // QuoteTo quotes an identifier through the active dialect.
 func (stmt *Statement) QuoteTo(ident string) string {
@@ -118,43 +195,23 @@ func (stmt *Statement) Delete(key string) {
 
 func (stmt *Statement) dialect() dialect.Dialector { return stmt.DB.Dialector }
 
-// buildOrder is the canonical clause order. Custom clauses keep their
-// insertion position after the standard ones.
-var buildOrder = []string{
-	"with", "select", "insert", "update", "delete", "from", "join", "set", "values",
-	"on_conflict", "where", "order", "limit", "offset", "locking", "returning",
-}
-
-// standardClauses accelerates the "is this a known clause name" check when
-// appending custom clauses after the canonical order.
-var standardClauses = func() map[string]bool {
-	m := make(map[string]bool, len(buildOrder))
-	for _, name := range buildOrder {
-		m[name] = true
-	}
-	return m
-}()
-
 // BuildClauses renders all registered clauses in order, binds vars, and
 // stores the result in SQL. Each build starts with a fresh var list.
 func (stmt *Statement) BuildClauses() []byte {
 	stmt.normalizeOnConflict()
 	b := &statementBuilder{stmt: stmt, buf: make([]byte, 0, 128)}
 	stmt.Vars = stmt.Vars[:0]
-	for _, name := range buildOrder {
-		c := stmt.Clauses[name]
-		if c == nil {
+	for i := 0; i < numSlots; i++ {
+		if stmt.slotMask&(1<<uint(i)) == 0 {
 			continue
 		}
 		if len(b.buf) > 0 && b.buf[len(b.buf)-1] != ' ' {
 			b.buf = append(b.buf, ' ')
 		}
-		c.Build(b)
+		stmt.slots[i].Build(b)
 	}
+	// Custom clauses only: standard names always route to slots.
 	for _, name := range stmt.Order {
-		if standardClauses[name] {
-			continue
-		}
 		c := stmt.Clauses[name]
 		if c == nil {
 			continue
@@ -175,8 +232,8 @@ func (stmt *Statement) BuildClauses() []byte {
 // Unresolvable models are left untouched — OnConflict.Build never emits
 // "ON CONFLICT ()" regardless.
 func (stmt *Statement) normalizeOnConflict() {
-	raw, ok := stmt.Clauses["on_conflict"]
-	if !ok {
+	raw := stmt.Clause("on_conflict")
+	if raw == nil {
 		return
 	}
 	oc, ok := raw.(clause.OnConflict)
@@ -211,7 +268,7 @@ func (stmt *Statement) normalizeOnConflict() {
 		}
 	}
 	if changed {
-		stmt.Clauses["on_conflict"] = oc
+		stmt.AddClause(oc)
 	}
 }
 
@@ -252,6 +309,10 @@ func (stmt *Statement) clone() Statement {
 		CreateBatchSize:      stmt.CreateBatchSize,
 		Preloads:             clonePreloads(stmt.Preloads),
 		Joins:                append([]joinEntry(nil), stmt.Joins...),
+		// Standard clauses ride along inline: an array copy, no map, no
+		// allocation. Only custom clauses (rare) touch the fallback map.
+		slots:    stmt.slots,
+		slotMask: stmt.slotMask,
 	}
 	if stmt.SQL != nil {
 		newStmt.SQL = append([]byte(nil), stmt.SQL...)
