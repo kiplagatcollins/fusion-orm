@@ -43,6 +43,12 @@ func trace(db *DB, ctx context.Context, begin time.Time, sql string, vars []any,
 	if db.Logger == nil {
 		return
 	}
+	// Gated loggers skip the closure allocation entirely when no line can
+	// result (Warn-level default with no error and a fast query). Loggers
+	// that do not implement logger.Tracer are always called, as before.
+	if t, ok := db.Logger.(logger.Tracer); ok && !t.WouldTrace(time.Since(begin), err) {
+		return
+	}
 	db.Logger.Trace(ctx, begin, func() (string, int64) {
 		s, p := sql, vars
 		if filter, ok := db.Logger.(logger.ParamsFilter); ok {

@@ -50,12 +50,27 @@ func (l *slogLogger) Error(ctx context.Context, msg string, data ...any) {
 	}
 }
 
-func (l *slogLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+func (l *slogLogger) WouldTrace(elapsed time.Duration, err error) bool {
 	if l.config.LogLevel <= Silent {
+		return false
+	}
+	switch {
+	case err != nil && l.config.LogLevel >= Error &&
+		(!errors.Is(err, ErrRecordNotFound) || !l.config.IgnoreRecordNotFoundError):
+		return true
+	case l.config.SlowThreshold != 0 && elapsed > l.config.SlowThreshold && l.config.LogLevel >= Warn:
+		return true
+	case l.config.LogLevel >= Info:
+		return true
+	}
+	return false
+}
+
+func (l *slogLogger) Trace(ctx context.Context, begin time.Time, fc func() (string, int64), err error) {
+	elapsed := time.Since(begin)
+	if !l.WouldTrace(elapsed, err) {
 		return
 	}
-
-	elapsed := time.Since(begin)
 	sql, rows := fc()
 	attrs := []any{
 		"duration", ms(elapsed),
@@ -71,7 +86,8 @@ func (l *slogLogger) Trace(ctx context.Context, begin time.Time, fc func() (stri
 		l.log(ctx, slog.LevelError, "SQL executed", append(attrs, "error", err.Error())...)
 	case l.config.SlowThreshold != 0 && elapsed > l.config.SlowThreshold && l.config.LogLevel >= Warn:
 		l.log(ctx, slog.LevelWarn, "SQL executed", attrs...)
-	case l.config.LogLevel >= Info:
+	default:
+		// WouldTrace guarantees the level reaches Info by here.
 		l.log(ctx, slog.LevelInfo, "SQL executed", attrs...)
 	}
 }

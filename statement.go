@@ -199,7 +199,15 @@ func (stmt *Statement) dialect() dialect.Dialector { return stmt.DB.Dialector }
 // stores the result in SQL. Each build starts with a fresh var list.
 func (stmt *Statement) BuildClauses() []byte {
 	stmt.normalizeOnConflict()
-	b := &statementBuilder{stmt: stmt, buf: make([]byte, 0, 128)}
+	// Reuse the previous build's backing array when present (SQL is consumed
+	// as a copied string by every caller, so overwriting it is safe); cold
+	// buffers start presized, since clause-by-clause appends would
+	// otherwise double from 32 bytes several times per build.
+	buf := stmt.SQL[:0]
+	if cap(buf) == 0 {
+		buf = make([]byte, 0, 128)
+	}
+	b := &statementBuilder{stmt: stmt, buf: buf}
 	stmt.Vars = stmt.Vars[:0]
 	for i := 0; i < numSlots; i++ {
 		if stmt.slotMask&(1<<uint(i)) == 0 {

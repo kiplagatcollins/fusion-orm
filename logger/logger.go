@@ -55,6 +55,16 @@ type ParamsFilter interface {
 	ParamsFilter(ctx context.Context, sql string, params ...any) (string, []any)
 }
 
+// Tracer is an optional interface a logger implements so callers can skip
+// building the Trace closure entirely when no line would be emitted. The
+// hot query path allocates the closure per statement; gated loggers avoid
+// it. Trace remains the authority: it decides output through WouldTrace.
+type Tracer interface {
+	// WouldTrace reports whether Trace would invoke fc and emit output for
+	// the given elapsed time and error.
+	WouldTrace(elapsed time.Duration, err error) bool
+}
+
 // Config tunes a logger built with New.
 type Config struct {
 	// SlowThreshold marks traces slower than this as warnings. Zero
@@ -132,22 +142,36 @@ func (l *textLogger) Error(_ context.Context, msg string, data ...any) {
 	}
 }
 
-func (l *textLogger) Trace(_ context.Context, begin time.Time, fc func() (string, int64), err error) {
+func (l *textLogger) WouldTrace(elapsed time.Duration, err error) bool {
 	if l.config.LogLevel <= Silent {
-		return
+		return false
 	}
-
-	elapsed := time.Since(begin)
 	switch {
 	case err != nil && l.config.LogLevel >= Error &&
 		(!errors.Is(err, ErrRecordNotFound) || !l.config.IgnoreRecordNotFoundError):
-		sql, rows := fc()
+		return true
+	case l.config.SlowThreshold != 0 && elapsed > l.config.SlowThreshold && l.config.LogLevel >= Warn:
+		return true
+	case l.config.LogLevel >= Info:
+		return true
+	}
+	return false
+}
+
+func (l *textLogger) Trace(_ context.Context, begin time.Time, fc func() (string, int64), err error) {
+	elapsed := time.Since(begin)
+	if !l.WouldTrace(elapsed, err) {
+		return
+	}
+	sql, rows := fc()
+	switch {
+	case err != nil && l.config.LogLevel >= Error &&
+		(!errors.Is(err, ErrRecordNotFound) || !l.config.IgnoreRecordNotFoundError):
 		l.writer.Printf("ERROR %s [%sms] [rows:%v] %s\n", err, ms(elapsed), rows, sql)
 	case l.config.SlowThreshold != 0 && elapsed > l.config.SlowThreshold && l.config.LogLevel >= Warn:
-		sql, rows := fc()
 		l.writer.Printf("SLOW SQL >= %v [%sms] [rows:%v] %s\n", l.config.SlowThreshold, ms(elapsed), rows, sql)
-	case l.config.LogLevel >= Info:
-		sql, rows := fc()
+	default:
+		// WouldTrace guarantees the level reaches Info by here.
 		l.writer.Printf("[%sms] [rows:%v] %s\n", ms(elapsed), rows, sql)
 	}
 }
