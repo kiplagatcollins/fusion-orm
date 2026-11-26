@@ -5,12 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-26
 
 ### Fixed
 
-- **Composite primary keys no longer silently bind or order by the first key
-  column** (audit groups D/Q):
+- **Composite primary keys no longer bind, order, or paginate by the first
+  key column alone** (audit groups D/Q):
   - Scalar id conditions (`First`/`Find`/`Take`/`Last`/`Delete(&m{}, 42)`) on
     a composite-key model return `ErrInvalidValue` instead of matching every
     row sharing `PKs[0]`. Single-key behavior is unchanged.
@@ -28,8 +28,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Relation inference fails loudly instead of guessing: belongs-to onto a
     composite-key table requires an explicit `references` column;
     has-one/has-many/many2many on a composite-key side are rejected at
-    parse time (single-FK relations onto composite tables via explicit tags
-    keep working).
+    parse time (single-column relations onto composite tables via explicit
+    tags keep working).
+
+### Performance
+
+- `Statement` is embedded by value in `DB`: every chain hop costs one
+  allocation instead of two.
+- The 16 canonical clause names live in an inline slot array + presence
+  bitmask; the `Clauses` map and `Order` slice now exist only for custom
+  (plugin) clause names. `AddClause`/`RemoveClause`/`Clause` and `clone` are
+  allocation-free for standard clauses (`Count` no longer allocates to
+  strip ORDER BY).
+- Association callbacks bail out immediately for models with no relations,
+  and no longer format a discarded error when `Dest` is nil
+  (`Update` had been paying ~6 allocs/op on this path).
+- `logger.Tracer` (optional interface implemented by both built-in
+  loggers): the query path checks `WouldTrace` before allocating the trace
+  closure, so gated loggers pay nothing per statement.
+- `BuildClauses` reuses the previous build's buffer on rebuilds.
+- Measured (benchcmp, in-memory SQLite, interleaved n=10): allocation
+  geomean 97/op vs bun 126 (+29%) and gorm 249 (+155%). Per-op vs v0.3.1:
+  Update 46→28, Delete 30→19, Count 31→24, Pluck 57→45, Create 46→37,
+  First 57→49, Preload 294→273, Batch100 814→809. Time geomean leads bun
+  by ~8% and gorm by ~47% on this run.
+
+### Added
+
+- `feature.RowValues` dialect flag (SQLite, PostgreSQL).
 
 ## [0.3.1] - 2026-11-23
 
