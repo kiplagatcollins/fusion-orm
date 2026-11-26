@@ -45,7 +45,7 @@ func TestOpenPingsSQLite(t *testing.T) {
 	if db.Error != nil {
 		t.Errorf("root Error = %v", db.Error)
 	}
-	if db.Statement == nil || db.Statement.Context == nil {
+	if db.Statement.Context == nil {
 		t.Fatal("Open must initialize Statement with a context")
 	}
 }
@@ -104,7 +104,7 @@ func TestChainInstancesAreIsolated(t *testing.T) {
 	tx1 := db.Exec("SELECT 1")
 	tx2 := db.Exec("SELECT 2")
 
-	if tx1 == tx2 || tx1.Statement == tx2.Statement {
+	if tx1 == tx2 || &tx1.Statement == &tx2.Statement {
 		t.Fatal("chains must not share a Statement")
 	}
 	if string(tx1.Statement.SQL) != "" || string(tx2.Statement.SQL) != "" {
@@ -146,6 +146,12 @@ func TestToSQLInterpolates(t *testing.T) {
 	if got := db.ToSQL(func(tx *DB) *DB { return tx }); got != "" {
 		t.Errorf("ToSQL of empty chain = %q, want empty", got)
 	}
+
+	// A queryFn that returns nil must not panic (Statement is a value field;
+	// the guard lives on the *DB, not on &Statement).
+	if got := db.ToSQL(func(*DB) *DB { return nil }); got != "" {
+		t.Errorf("ToSQL of nil-returning fn = %q, want empty", got)
+	}
 }
 
 func TestSessionFlagsDoNotLeak(t *testing.T) {
@@ -181,7 +187,7 @@ func TestSessionContextIsolatesStatement(t *testing.T) {
 	ctx := context.WithValue(context.Background(), ctxKey{}, "v")
 	sess := db.WithContext(ctx)
 
-	if sess.Statement == db.Statement {
+	if &sess.Statement == &db.Statement {
 		t.Fatal("WithContext must clone the Statement")
 	}
 	if sess.Statement.Context != ctx {
@@ -315,7 +321,7 @@ func TestStatementCloneIsolatesSettingsAndSQL(t *testing.T) {
 	stmt.Settings.Store("k", "v")
 
 	clone := stmt.clone()
-	if clone == stmt {
+	if &clone == stmt {
 		t.Fatal("clone returned the same pointer")
 	}
 	if string(clone.SQL) != "SELECT 1" {
@@ -374,7 +380,7 @@ func TestSessionSchemaCacheAndStrictTags(t *testing.T) {
 func TestNilStatementContextUsesTODO(t *testing.T) {
 	db := openTestDB(t)
 	db.Statement.Context = nil
-	ctx := statementContext(db.Statement)
+	ctx := statementContext(&db.Statement)
 	if ctx == nil {
 		t.Fatal("statementContext returned nil")
 	}

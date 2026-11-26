@@ -236,8 +236,10 @@ func (b *statementBuilder) AddVar(v any) {
 // clone returns a deep-enough copy for copy-on-write chaining: SQL/Vars and
 // clause state are copied, Settings entries are replayed into a fresh map,
 // and the pool and context are carried over (a transaction must survive it).
-func (stmt *Statement) clone() *Statement {
-	newStmt := &Statement{
+// It returns a value so the caller can store it inside an embedded DB field
+// without a second heap allocation.
+func (stmt *Statement) clone() Statement {
+	newStmt := Statement{
 		DB:                   stmt.DB,
 		ConnPool:             stmt.ConnPool,
 		Context:              stmt.Context,

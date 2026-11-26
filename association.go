@@ -262,7 +262,7 @@ func (a *Association) junctionLinked(spec joinSpec, sourceKey, childKey any) (bo
 	sql.Write(a.db.Dialector.BindVarTo(nil, 2))
 
 	row := a.db.Statement.ConnPool.QueryRowContext(
-		statementContext(a.db.Statement), sql.String(), sourceKey, childKey)
+		statementContext(&a.db.Statement), sql.String(), sourceKey, childKey)
 	var n int64
 	if err := row.Scan(&n); err != nil {
 		return false, fmt.Errorf("check join table %s: %w", spec.table, err)

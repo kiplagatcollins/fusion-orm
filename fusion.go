@@ -151,8 +151,11 @@ type DB struct {
 	Error error
 	// RowsAffected is set by finishers that execute DML.
 	RowsAffected int64
-	// Statement holds the chain's per-statement state.
-	Statement *Statement
+	// Statement holds the chain's per-statement state. It is embedded by
+	// value so a chain hop (getInstance) costs one allocation, not two;
+	// copy-on-write semantics are unchanged (clone deep-copies maps and
+	// slices).
+	Statement Statement
 	// clone selects getInstance's behavior: 1 = fresh statement on next
 	// use (root/pristine), 2 = clone the current statement (mid-chain).
 	clone int
@@ -207,7 +210,7 @@ func Open(d dialect.Dialector, opts ...Option) (*DB, error) {
 	db := &DB{
 		Config: config,
 		clone:  1,
-		Statement: &Statement{
+		Statement: Statement{
 			DB:       nil, // set below; Config is shared, DB pointer is not
 			ConnPool: config.ConnPool,
 			Context:  context.TODO(),
@@ -330,11 +333,10 @@ func (db *DB) Use(plugin Plugin) error {
 //	})
 func (db *DB) ToSQL(queryFn func(tx *DB) *DB) string {
 	tx := queryFn(db.Session(&Session{DryRun: true}).getInstance())
-	stmt := tx.Statement
-	if stmt == nil || len(stmt.SQL) == 0 {
+	if tx == nil || len(tx.Statement.SQL) == 0 {
 		return ""
 	}
-	return dialect.Explain(db.Dialector, string(stmt.SQL), stmt.Vars...)
+	return dialect.Explain(db.Dialector, string(tx.Statement.SQL), tx.Statement.Vars...)
 }
 
 // Parse returns the cached schema metadata for model, using this session's
@@ -358,10 +360,8 @@ func (db *DB) DB() (*sql.DB, error) {
 			pool = wrapper.Underlying()
 		}
 	}
-	if db.Statement != nil {
-		if pool, ok := unwrap(db.Statement.ConnPool).(*sql.DB); ok {
-			return pool, nil
-		}
+	if pool, ok := unwrap(db.Statement.ConnPool).(*sql.DB); ok {
+		return pool, nil
 	}
 	if pool, ok := unwrap(db.Config.ConnPool).(*sql.DB); ok {
 		return pool, nil
@@ -379,12 +379,8 @@ func (db *DB) Migrator(opts ...migrator.Option) (*migrator.Migrator, error) {
 	// stale schema (GORM #7255 class): clear every cache the session can
 	// reach (transaction-scoped and pool-scoped). Clearing twice is a
 	// no-op, so no dedup is needed.
-	var statementPool ConnPool
-	if db.Statement != nil {
-		statementPool = db.Statement.ConnPool
-	}
 	var invalidators []func()
-	for _, candidate := range []ConnPool{statementPool, db.Config.ConnPool} {
+	for _, candidate := range []ConnPool{db.Statement.ConnPool, db.Config.ConnPool} {
 		if invalidator, ok := candidate.(interface{ InvalidatePrepared() }); ok {
 			invalidators = append(invalidators, invalidator.InvalidatePrepared)
 		}
@@ -407,7 +403,7 @@ func (db *DB) Migrator(opts ...migrator.Option) (*migrator.Migrator, error) {
 func (db *DB) getInstance() *DB {
 	tx := &DB{Config: db.Config, Error: db.Error}
 	if db.clone == 1 {
-		tx.Statement = &Statement{
+		tx.Statement = Statement{
 			DB:       tx,
 			ConnPool: db.Statement.ConnPool,
 			Context:  db.Statement.Context,

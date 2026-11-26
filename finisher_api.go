@@ -340,9 +340,9 @@ func (db *DB) Row() *sql.Row {
 		// has no *DB result of its own, so the build error is surfaced on
 		// the receiver: m := db.Model(x); row := m.Row(); m.Error.
 		db.Error = tx.Error
-		return tx.Statement.ConnPool.QueryRowContext(statementContext(tx.Statement), rowBuildErrorSQL)
+		return tx.Statement.ConnPool.QueryRowContext(statementContext(&tx.Statement), rowBuildErrorSQL)
 	}
-	return tx.queryRowContext(statementContext(tx.Statement), string(tx.Statement.SQL), tx.Statement.Vars...)
+	return tx.queryRowContext(statementContext(&tx.Statement), string(tx.Statement.SQL), tx.Statement.Vars...)
 }
 
 // Rows builds the query through the row processor and returns the result

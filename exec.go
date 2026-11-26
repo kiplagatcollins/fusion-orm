@@ -24,7 +24,7 @@ func (db *DB) Exec(sql string, args ...any) *DB {
 		return tx
 	}
 
-	ctx := statementContext(tx.Statement)
+	ctx := statementContext(&tx.Statement)
 	result, err := tx.execContext(ctx, sql, args...)
 	if err != nil {
 		tx.AddError(err)

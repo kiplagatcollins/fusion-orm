@@ -111,7 +111,7 @@ func applyJoins(db *DB, table *schema.Table) error {
 		return nil
 	}
 
-	q := db.Statement
+	q := &db.Statement
 	cols := make([]string, 0, len(table.Fields)+8)
 	for _, field := range table.Fields {
 		cols = append(cols, q.QuoteTo(root+"."+field.DBName)+" AS "+q.QuoteTo(field.DBName))

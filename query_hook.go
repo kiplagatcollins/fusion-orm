@@ -39,7 +39,7 @@ func finishQuery(db *DB, ctx context.Context, event *QueryEvent, begin time.Time
 func (db *DB) execContext(ctx context.Context, query string, vars ...any) (sql.Result, error) {
 	ctx = nonNilContext(ctx)
 	begin := time.Now()
-	event := &QueryEvent{Context: ctx, SQL: query, Vars: vars, StartTime: begin, Statement: db.Statement}
+	event := &QueryEvent{Context: ctx, SQL: query, Vars: vars, StartTime: begin, Statement: &db.Statement}
 	ctx = db.beforeQuery(ctx, event)
 	result, err := db.Statement.ConnPool.ExecContext(ctx, query, vars...)
 	rows := int64(-1)
@@ -55,7 +55,7 @@ func (db *DB) execContext(ctx context.Context, query string, vars ...any) (sql.R
 func (db *DB) queryContext(ctx context.Context, query string, vars ...any) (*sql.Rows, error) {
 	ctx = nonNilContext(ctx)
 	begin := time.Now()
-	event := &QueryEvent{Context: ctx, SQL: query, Vars: vars, StartTime: begin, Statement: db.Statement}
+	event := &QueryEvent{Context: ctx, SQL: query, Vars: vars, StartTime: begin, Statement: &db.Statement}
 	ctx = db.beforeQuery(ctx, event)
 	rows, err := db.Statement.ConnPool.QueryContext(ctx, query, vars...)
 	finishQuery(db, ctx, event, begin, -1, err)
@@ -65,7 +65,7 @@ func (db *DB) queryContext(ctx context.Context, query string, vars ...any) (*sql
 func (db *DB) queryRowContext(ctx context.Context, query string, vars ...any) *sql.Row {
 	ctx = nonNilContext(ctx)
 	begin := time.Now()
-	event := &QueryEvent{Context: ctx, SQL: query, Vars: vars, StartTime: begin, Statement: db.Statement}
+	event := &QueryEvent{Context: ctx, SQL: query, Vars: vars, StartTime: begin, Statement: &db.Statement}
 	ctx = db.beforeQuery(ctx, event)
 	row := db.Statement.ConnPool.QueryRowContext(ctx, query, vars...)
 	finishQuery(db, ctx, event, begin, -1, nil)

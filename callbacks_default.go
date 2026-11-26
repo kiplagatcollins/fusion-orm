@@ -183,7 +183,7 @@ func queryRows(db *DB) {
 		db.AddError(err)
 		return
 	}
-	ctx := statementContext(db.Statement)
+	ctx := statementContext(&db.Statement)
 	rows, err := db.queryContext(ctx, string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("query %s: %w", table.Name, err))
@@ -206,7 +206,7 @@ func queryRowsForRow(db *DB) {
 	if db.Config.DryRun {
 		return
 	}
-	rows, err := db.queryContext(statementContext(db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
+	rows, err := db.queryContext(statementContext(&db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("query rows: %w", err))
 		return
@@ -222,7 +222,7 @@ func execRaw(db *DB) {
 }
 
 func (db *DB) execSQL(sql string, vars []any) {
-	result, err := db.execContext(statementContext(db.Statement), sql, vars...)
+	result, err := db.execContext(statementContext(&db.Statement), sql, vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("exec %s: %w", firstSQLWord(sql), err))
 	} else if result != nil {
@@ -356,7 +356,7 @@ func backfillFromReturning(db *DB, values []reflect.Value, table *schema.Table) 
 	if pk == nil {
 		return
 	}
-	rows, err := db.queryContext(statementContext(db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
+	rows, err := db.queryContext(statementContext(&db.Statement), string(db.Statement.SQL), db.Statement.Vars...)
 	if err != nil {
 		db.AddError(fmt.Errorf("returning id: %w", err))
 		return

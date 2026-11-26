@@ -74,7 +74,7 @@ func (db *DB) Transaction(fc func(tx *DB) error, opts ...*sql.TxOptions) (err er
 func (db *DB) Begin(opts ...*sql.TxOptions) *DB {
 	tx := db.getInstance()
 
-	ctx := statementContext(tx.Statement)
+	ctx := statementContext(&tx.Statement)
 	var opt *sql.TxOptions
 	if len(opts) > 0 {
 		opt = opts[0]
@@ -157,7 +157,7 @@ func (db *DB) savepoint(appendSQL func([]byte, dialect.Dialector, string) []byte
 	}
 
 	query := string(appendSQL(nil, tx.Dialector, name))
-	_, err := tx.execContext(statementContext(tx.Statement), query)
+	_, err := tx.execContext(statementContext(&tx.Statement), query)
 	tx.AddError(err)
 	return tx
 }
